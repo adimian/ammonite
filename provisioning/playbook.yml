@@ -1,0 +1,25 @@
+---
+- hosts: all
+  sudo: True
+  tasks:
+  
+    - name: update hostname
+      hostname: name=ammonite
+  
+    - name: install deps
+      apt: name={{item}} state=latest update_cache=yes
+      with_items:
+        - python
+        - python-dev
+        
+    - name: install pip
+      shell: wget -qO- https://bootstrap.pypa.io/get-pip.py | python
+  
+    - name: install docker
+      shell: wget -qO- https://get.docker.com/ | sh
+      
+    - name: add user in docker group
+      user: name={{ansible_ssh_user}} groups=docker append=yes
+      
+    - name: install pip deps
+      command: pip install -r /vagrant/requirements.txt

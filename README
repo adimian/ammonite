@@ -1,0 +1,2 @@
+$ cd /vagrant
+$ python ammonite/worker.py -f config/dev.cfg
