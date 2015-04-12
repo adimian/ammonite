@@ -2,6 +2,13 @@ import pika
 import argparse
 import ConfigParser
 import os
+import logging
+import sys
+logging.basicConfig(stream=sys.stdout,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+
+logger = logging.getLogger(__name__)
+logger.level = logging.DEBUG
 
 
 def serve(config):
@@ -12,12 +19,16 @@ def serve(config):
     queue_name = config.get('QUEUES', 'JOBS')
 
     channel.queue_declare(queue=queue_name, durable=True)
-    print '---'
-    print '--- Ammonite worker ready. Waiting for messages. To exit press CTRL+C'
-    print '---'
+    logger.info('---')
+    logger.info('--- Ammonite worker ready.')
+    logger.info('--- Waiting for messages.')
+    logger.info('--- To exit press CTRL+C')
+    logger.info('---')
 
     def callback(ch, method, properties, body):
-        print 'received %r' % (body,)
+        logger.info('received %r', body)
+        logger.info('starting to  working')
+        logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     channel.basic_qos(prefetch_count=int(config.get('WORKER', 'SLOTS')))
