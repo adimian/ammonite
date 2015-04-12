@@ -57,14 +57,14 @@ class ExecutionCallback(object):
                                recipe['image']))
         container = docker.create_container(image=image_name,
                                             command=recipe['command'],
-                                            volumes=['/inbox',
-                                                     '/outbox'])
+                                            volumes=[inbox,
+                                                     outbox])
 
         response = docker.start(container=container.get('Id'),
-                                binds={'/inbox': {'bind': inbox,
-                                                  'ro': True},
-                                       '/outbox': {'bind': outbox,
-                                                   'ro': False}})
+                                binds={inbox: {'bind': '/inbox',
+                                               'ro': True},
+                                       outbox: {'bind': '/outbox',
+                                                'ro': False}})
 
         self.put_in_message_queue(queue='results',
                                   message=json.dumps({'id': recipe['execution'],
