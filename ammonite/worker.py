@@ -27,7 +27,7 @@ def serve(config):
 
     def callback(ch, method, properties, body):
         logger.info('received %r', body)
-        logger.info('starting to  working')
+        logger.info('starting to work')
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
