@@ -23,3 +23,10 @@
       
     - name: install pip deps
       command: pip install -r /vagrant/requirements.txt
+
+    - name: allow insecure registry
+      lineinfile: |
+        dest=/etc/default/docker
+        state=present
+        line='DOCKER_OPTS="--insecure-registry 192.168.222.111:7900"'
+        
