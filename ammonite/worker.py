@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 logger.level = logging.DEBUG
 
 
+class ExecutionCallback(object):
+
+    def __call__(self, ch, method, properties, body):
+        logger.info('received %r', body)
+        logger.info('starting to work')
+        logger.info('done working')
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
 def serve(config):
     parameters = pika.ConnectionParameters(host=config.get('AMQP', 'HOSTNAME'))
     connection = pika.BlockingConnection(parameters)
@@ -25,14 +34,8 @@ def serve(config):
     logger.info('--- To exit press CTRL+C')
     logger.info('---')
 
-    def callback(ch, method, properties, body):
-        logger.info('received %r', body)
-        logger.info('starting to work')
-        logger.info('done working')
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-
     channel.basic_qos(prefetch_count=int(config.get('WORKER', 'SLOTS')))
-    channel.basic_consume(callback,
+    channel.basic_consume(ExecutionCallback(),
                           queue=queue_name)
 
     channel.start_consuming()
