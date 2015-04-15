@@ -7,6 +7,8 @@ import sys
 import tempfile
 import json
 import docker
+import requests
+import zipfile
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -35,13 +37,41 @@ class ExecutionCallback(object):
                               properties=properties)
 
     def _create_temp_dir(self, direction):
-        return tempfile.mktemp(prefix='ammonite-%s-' % direction)
+        return tempfile.mkdtemp(prefix='ammonite-%s-' % direction)
 
     def create_inbox(self):
         return self._create_temp_dir(direction='inbox')
 
     def create_outbox(self):
         return self._create_temp_dir(direction='outbox')
+
+    def populate_inbox(self, inbox, execution_id, token):
+        url = "%s/execution/%s/attachments/%s" % (self.config.get('QUEUES', 'KABUTO_SERVICE'), execution_id, token)
+        r = requests.get(url, stream=True)
+        zip_dir = os.path.join(inbox, 'attachment.zip')
+        with open(zip_dir, 'wb+') as fh:
+            if not r.ok:
+                raise Exception("Could not retrieve attachment")
+
+            for block in r.iter_content(1024):
+                if not block:
+                    break
+                fh.write(block)
+        logger.info("extracting from %s" % zip_dir)
+        with zipfile.ZipFile(zip_dir) as zf:
+            logger.info("extracting in %s" % inbox)
+            zf.extractall(inbox)
+        os.remove(zip_dir)
+
+    def upload_output(self, outbox, execution_id, token):
+        zip_file = "%s.zip" % os.path.join("/tmp", token)
+        zipf = zipfile.ZipFile(zip_file, 'w')
+        zipdir(outbox, zipf, root_folder=outbox)
+        zipf.close()
+
+        url = "%s/execution/%s/results/%s" % (self.config.get('QUEUES', 'KABUTO_SERVICE'), execution_id, token)
+        files = [("results", open(zip_file, "rb"))]
+        requests.post(url, files=files)
 
     def __call__(self, ch, method, properties, body):
         logger.info('received %r', body)
@@ -52,19 +82,41 @@ class ExecutionCallback(object):
         inbox = self.create_inbox()
         outbox = self.create_outbox()
 
-        docker = self.get_docker_client()
+        logger.info('downloading attachments')
+        self.populate_inbox(inbox, recipe['execution'], recipe['attachment_token'])
+        logger.info('finished downloading attachments')
+
+        docker_client = self.get_docker_client()
         image_name = '/'.join((self.config.get('DOCKER', 'REGISTRY'),
                                recipe['image']))
-        container = docker.create_container(image=image_name,
+
+        logger.info("creating container")
+        container = docker_client.create_container(image=image_name,
                                             command=recipe['command'],
                                             volumes=[inbox,
                                                      outbox])
+        logger.info("finished creating container")
 
-        response = docker.start(container=container.get('Id'),
+        logger.info('starting job')
+        response = docker_client.start(container=container.get('Id'),
                                 binds={inbox: {'bind': '/inbox',
                                                'ro': True},
                                        outbox: {'bind': '/outbox',
                                                 'ro': False}})
+
+        logs = docker_client.logs(container.get('Id'),
+                                  stdout=True,
+                                  stderr=True,
+                                  stream=True,
+                                  timestamps=True)
+        for log in logs:
+            logger.info(log)
+
+        logger.info('finished job with response: %s' % response)
+
+        logger.info('uploading results')
+        self.upload_output(outbox, recipe['execution'], recipe['result_token'])
+        logger.info('finished uploading results')
 
         self.put_in_message_queue(queue='results',
                                   message=json.dumps({'id': recipe['execution'],
@@ -77,6 +129,14 @@ class ExecutionCallback(object):
 
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
+def zipdir(path, zipf, root_folder):
+    # Still need to find a clean way to write empty folders, as this is not being done
+    for root, dirs, files in os.walk(path):
+        for fh in files:
+            file_path = os.path.join(root, fh)
+            zipf.write(file_path, os.path.relpath(file_path, root_folder))
 
 
 def serve(config):
