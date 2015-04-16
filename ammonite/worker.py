@@ -63,7 +63,7 @@ class ExecutionCallback(object):
             zf.extractall(inbox)
         os.remove(zip_dir)
 
-    def upload_output(self, outbox, execution_id, token):
+    def upload_output(self, outbox, execution_id, token, data):
         zip_file = "%s.zip" % os.path.join("/tmp", token)
         zipf = zipfile.ZipFile(zip_file, 'w')
         zipdir(outbox, zipf, root_folder=outbox)
@@ -71,7 +71,7 @@ class ExecutionCallback(object):
 
         url = "%s/execution/%s/results/%s" % (self.config.get('QUEUES', 'KABUTO_SERVICE'), execution_id, token)
         files = [("results", open(zip_file, "rb"))]
-        requests.post(url, files=files)
+        requests.post(url, files=files, data=data)
 
     def __call__(self, ch, method, properties, body):
         logger.info('received %r', body)
@@ -111,21 +111,21 @@ class ExecutionCallback(object):
                                   timestamps=True)
         for log in logs:
             logger.info(log)
+            url = '%s/execution/%s/log/%s' % (self.config.get('QUEUES', 'KABUTO_SERVICE'),
+                                            recipe['execution'],
+                                            recipe['result_token'])
+            requests.post(url, data={"log_line": log})
 
         logger.info('finished job with response: %s' % response)
 
         logger.info('uploading results')
-        self.upload_output(outbox, recipe['execution'], recipe['result_token'])
+        data = {"state": "done",
+                "response": response,
+                "cpu": 0,
+                "memory": 0,
+                "io": 0}
+        self.upload_output(outbox, recipe['execution'], recipe['result_token'], data)
         logger.info('finished uploading results')
-
-        self.put_in_message_queue(queue='results',
-                                  message=json.dumps({'id': recipe['execution'],
-                                                      'outbox': outbox,
-                                                      'state': 'done',
-                                                      'response': response,
-                                                      'cpu': 0,
-                                                      'memory': 0,
-                                                      'io': 0}))
 
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
