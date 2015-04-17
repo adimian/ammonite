@@ -27,7 +27,7 @@ class ExecutionCallback(object):
         if self.config.get('DOCKER', 'LOGIN'):
             client.login(self.config.get('DOCKER', 'LOGIN'),
                          self.config.get('DOCKER', 'PASSWORD'),
-                         registry=self.config.get('DOCKER', 'REGISTRY_URL'))
+                         registry=self.config.get('DOCKER', 'REGISTRY'))
         return client
 
     def put_in_message_queue(self, queue, message):
