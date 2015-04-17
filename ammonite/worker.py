@@ -50,7 +50,8 @@ class ExecutionCallback(object):
         return self._create_temp_dir(direction='outbox')
 
     def populate_inbox(self, inbox, execution_id, token):
-        url = "%s/execution/%s/attachments/%s" % (self.config.get('QUEUES', 'KABUTO_SERVICE'), execution_id, token)
+        service = self.config.get('QUEUES', 'KABUTO_SERVICE')
+        url = "%s/execution/%s/attachments/%s" % (service, execution_id, token)
         r = requests.get(url, stream=True)
         zip_dir = os.path.join(inbox, 'attachment.zip')
         with open(zip_dir, 'wb+') as fh:
@@ -73,7 +74,8 @@ class ExecutionCallback(object):
         zipdir(outbox, zipf, root_folder=outbox)
         zipf.close()
 
-        url = "%s/execution/%s/results/%s" % (self.config.get('QUEUES', 'KABUTO_SERVICE'), execution_id, token)
+        service = self.config.get('QUEUES', 'KABUTO_SERVICE')
+        url = "%s/execution/%s/results/%s" % (service, execution_id, token)
         files = [("results", open(zip_file, "rb"))]
         requests.post(url, files=files, data=data)
 
@@ -87,7 +89,8 @@ class ExecutionCallback(object):
         outbox = self.create_outbox()
 
         logger.info('downloading attachments')
-        self.populate_inbox(inbox, recipe['execution'], recipe['attachment_token'])
+        self.populate_inbox(inbox, recipe['execution'],
+                            recipe['attachment_token'])
         logger.info('finished downloading attachments')
 
         docker_client = self.get_docker_client()
@@ -96,15 +99,14 @@ class ExecutionCallback(object):
 
         logger.info("creating container")
         container = docker_client.create_container(image=image_name,
-                                            command=recipe['command'],
-                                            volumes=[inbox,
-                                                     outbox])
+                                                   command=recipe['command'],
+                                                   volumes=[inbox, outbox])
         logger.info("finished creating container")
 
         logger.info('starting job')
         response = docker_client.start(container=container.get('Id'),
-                                binds={inbox: {'bind': '/inbox',
-                                               'ro': True},
+                                       binds={inbox: {'bind': '/inbox',
+                                                      'ro': True},
                                        outbox: {'bind': '/outbox',
                                                 'ro': False}})
 
@@ -115,9 +117,10 @@ class ExecutionCallback(object):
                                   timestamps=True)
         for log in logs:
             logger.info(log)
-            url = '%s/execution/%s/log/%s' % (self.config.get('QUEUES', 'KABUTO_SERVICE'),
-                                            recipe['execution'],
-                                            recipe['result_token'])
+            service = self.config.get('QUEUES', 'KABUTO_SERVICE')
+            url = '%s/execution/%s/log/%s' % (service,
+                                              recipe['execution'],
+                                              recipe['result_token'])
             requests.post(url, data={"log_line": log})
 
         logger.info('finished job with response: %s' % response)
@@ -128,7 +131,9 @@ class ExecutionCallback(object):
                 "cpu": 0,
                 "memory": 0,
                 "io": 0}
-        self.upload_output(outbox, recipe['execution'], recipe['result_token'], data)
+        self.upload_output(outbox, recipe['execution'],
+                           recipe['result_token'],
+                           data)
         logger.info('finished uploading results')
 
         logger.info('done working')
@@ -136,8 +141,9 @@ class ExecutionCallback(object):
 
 
 def zipdir(path, zipf, root_folder):
-    # Still need to find a clean way to write empty folders, as this is not being done
-    for root, dirs, files in os.walk(path):
+    # Still need to find a clean way to write empty folders,
+    # as this is not being done
+    for root, _, files in os.walk(path):
         for fh in files:
             file_path = os.path.join(root, fh)
             zipf.write(file_path, os.path.relpath(file_path, root_folder))
