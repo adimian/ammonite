@@ -27,7 +27,7 @@ class ExecutionCallback(object):
         if self.config.get('DOCKER', 'LOGIN'):
             client.login(self.config.get('DOCKER', 'LOGIN'),
                          self.config.get('DOCKER', 'PASSWORD'),
-                         registry=self.config.get('DOCKER', 'REGISTRY'))
+                         registry=self.config.get('DOCKER', 'REGISTRY_URL'))
         return client
 
     def put_in_message_queue(self, queue, message):
@@ -91,7 +91,7 @@ class ExecutionCallback(object):
         logger.info('finished downloading attachments')
 
         docker_client = self.get_docker_client()
-        image_name = '/'.join((self.config.get('DOCKER', 'REGISTRY'),
+        image_name = '/'.join((self.config.get('DOCKER', 'REGISTRY_URL'),
                                recipe['image']))
 
         logger.info("creating container")
