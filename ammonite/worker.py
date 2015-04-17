@@ -69,7 +69,7 @@ class ExecutionCallback(object):
         os.remove(zip_dir)
 
     def upload_output(self, outbox, execution_id, token, data):
-        zip_file = "%s.zip" % os.path.join("/tmp", token)
+        zip_file = "%s.zip" % os.path.join(tempfile.mkdtemp(), token)
         zipf = zipfile.ZipFile(zip_file, 'w')
         zipdir(outbox, zipf, root_folder=outbox)
         zipf.close()
