@@ -1,14 +1,15 @@
-import pika
 import argparse
 import configparser
-import os
+import json
 import logging
+import os
 import sys
 import tempfile
-import json
-import docker
-import requests
 import zipfile
+
+import docker
+import pika
+import requests
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
