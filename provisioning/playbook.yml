@@ -9,24 +9,30 @@
     - name: install deps
       apt: name={{item}} state=latest update_cache=yes
       with_items:
-        - python
-        - python-dev
+        - python3
+        - python3-dev
         
     - name: install pip
-      shell: wget -qO- https://bootstrap.pypa.io/get-pip.py | python
+      shell: wget -qO- https://bootstrap.pypa.io/get-pip.py | python3
+      args:
+        creates: /usr/local/bin/pip3
   
     - name: install docker
       shell: wget -qO- https://get.docker.com/ | sh
+      args:
+        creates: /usr/bin/docker
       
     - name: add user in docker group
       user: name={{ansible_ssh_user}} groups=docker append=yes
       
     - name: install pip deps
-      command: pip install -r /vagrant/requirements.txt
+      command: pip3 install -r /vagrant/requirements.txt
 
     - name: allow insecure registry
       lineinfile: |
         dest=/etc/default/docker
         state=present
         line='DOCKER_OPTS="--insecure-registry 192.168.222.111:7900"'
-        
+
+    - name: Restart docker to make it read above config change
+      service: name=docker state=restarted

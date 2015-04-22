@@ -1,6 +1,6 @@
 import pika
 import argparse
-import ConfigParser
+import configparser
 import os
 import logging
 import sys
@@ -83,7 +83,7 @@ class ExecutionCallback(object):
         logger.info('received %r', body)
         logger.info('starting to work')
 
-        recipe = json.loads(body)
+        recipe = json.loads(body.decode('utf-8'))
 
         inbox = self.create_inbox()
         outbox = self.create_outbox()
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     if not os.path.exists(config_file):
         parser.error('configuration file %s does not exist' % config_file)
 
-    config_parser = ConfigParser.ConfigParser()
+    config_parser = configparser.ConfigParser()
     config_parser.read([str(config_file), ])
 
     serve(config_parser)
