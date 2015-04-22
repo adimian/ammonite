@@ -98,6 +98,8 @@ class ExecutionCallback(object):
                                recipe['image']))
 
         logger.info("creating container")
+        # create_container fail if image is not pulled first:
+        docker_client.pull(image_name, insecure_registry=True)
         container = docker_client.create_container(image=image_name,
                                                    command=recipe['command'],
                                                    volumes=[inbox, outbox])
