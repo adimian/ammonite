@@ -63,7 +63,6 @@ class ExecutionCallback(object):
                 if not block:
                     break
                 fh.write(block)
-        logger.info("extracting from %s" % zip_dir)
         with zipfile.ZipFile(zip_dir) as zf:
             logger.info("extracting in %s" % inbox)
             zf.extractall(inbox)
@@ -74,7 +73,7 @@ class ExecutionCallback(object):
         zipf = zipfile.ZipFile(zip_file, 'w')
         zipdir(outbox, zipf, root_folder=outbox)
         zipf.close()
-
+        logger.info("creating zip from %s" % outbox)
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
         url = "%s/execution/%s/results/%s" % (service, execution_id, token)
         files = [("results", open(zip_file, "rb"))]
@@ -101,17 +100,19 @@ class ExecutionCallback(object):
         logger.info("creating container")
         # create_container fail if image is not pulled first:
         docker_client.pull(image_name, insecure_registry=True)
+        mem_limit = self.config.get('DOCKER', 'MEMORY_LIMIT')
         container = docker_client.create_container(image=image_name,
                                                    command=recipe['command'],
-                                                   volumes=[inbox, outbox])
+                                                   volumes=[inbox, outbox],
+                                                   mem_limit=mem_limit)
         logger.info("finished creating container")
 
         logger.info('starting job')
-        response = docker_client.start(container=container.get('Id'),
-                                       binds={inbox: {'bind': '/inbox',
-                                                      'ro': True},
-                                       outbox: {'bind': '/outbox',
-                                                'ro': False}})
+        docker_client.start(container=container.get('Id'),
+                            binds={inbox: {'bind': '/inbox',
+                                           'ro': True},
+                            outbox: {'bind': '/outbox',
+                                     'ro': False}})
 
         logs = docker_client.logs(container.get('Id'),
                                   stdout=True,
@@ -126,6 +127,7 @@ class ExecutionCallback(object):
                                               recipe['result_token'])
             requests.post(url, data={"log_line": log})
 
+        response = docker_client.wait(container=container.get('Id'))
         logger.info('finished job with response: %s' % response)
 
         logger.info('uploading results')
