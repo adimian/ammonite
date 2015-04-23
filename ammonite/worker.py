@@ -170,7 +170,14 @@ def zipdir(path, zipf, root_folder):
 
 
 def serve(config):
-    parameters = pika.ConnectionParameters(host=config.get('AMQP', 'HOSTNAME'))
+    credentials = pika.PlainCredentials(
+        config.get('AMQP', 'USER'),
+        config.get('AMQP', 'PASSWORD'),
+    )
+    parameters = pika.ConnectionParameters(
+        host=config.get('AMQP', 'HOSTNAME'),
+        credentials=credentials,
+    )
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
 
