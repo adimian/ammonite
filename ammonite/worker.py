@@ -22,6 +22,7 @@ class ExecutionCallback(object):
     def __init__(self, connection, config):
         self.connection = connection
         self.config = config
+        self.log_buffer = []
 
     def get_docker_client(self):
         client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
@@ -108,30 +109,35 @@ class ExecutionCallback(object):
         logger.info("finished creating container")
 
         logger.info('starting job')
-        docker_client.start(container=container.get('Id'),
-                            binds={inbox: {'bind': '/inbox',
-                                           'ro': True},
-                            outbox: {'bind': '/outbox',
-                                     'ro': False}})
-
-        logs = docker_client.logs(container.get('Id'),
-                                  stdout=True,
-                                  stderr=True,
-                                  stream=True,
-                                  timestamps=True)
-        for log in logs:
-            logger.info(log)
-            service = self.config.get('QUEUES', 'KABUTO_SERVICE')
-            url = '%s/execution/%s/log/%s' % (service,
+        state = "done"
+        service = self.config.get('QUEUES', 'KABUTO_SERVICE')
+        log_url = '%s/execution/%s/log/%s' % (service,
                                               recipe['execution'],
                                               recipe['result_token'])
-            requests.post(url, data={"log_line": log})
+        try:
+            docker_client.start(container=container.get('Id'),
+                                binds={inbox: {'bind': '/inbox',
+                                               'ro': True},
+                                outbox: {'bind': '/outbox',
+                                         'ro': False}})
 
+            logs = docker_client.logs(container.get('Id'),
+                                      stdout=True,
+                                      stderr=True,
+                                      stream=True,
+                                      timestamps=True)
+            for log in logs:
+                self.send_logs(log, log_url)
+
+        except Exception as e:
+            state = "failed"
+            self.send_logs(e, log_url)
+        self.send_logs("", log_url, force=True)
         response = docker_client.wait(container=container.get('Id'))
         logger.info('finished job with response: %s' % response)
 
         logger.info('uploading results')
-        data = {"state": "done",
+        data = {"state": state,
                 "response": response,
                 "cpu": 0,
                 "memory": 0,
@@ -143,6 +149,15 @@ class ExecutionCallback(object):
 
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    def send_logs(self, log, url, force=False):
+        logger.info(log)
+        # prevent from flooding the kabuto http server by
+        # sending sporadic updates instead of each line separate
+        self.log_buffer.append(log)
+        if len(self.log_buffer) >= 20 or force:
+            requests.post(url, data={"log_line": self.log_buffer})
+            self.log_buffer = []
 
 
 def zipdir(path, zipf, root_folder):
