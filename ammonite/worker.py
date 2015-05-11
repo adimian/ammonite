@@ -55,10 +55,10 @@ class ExecutionCallback(object):
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
         url = "%s/execution/%s/attachments/%s" % (service, execution_id, token)
         r = requests.get(url, stream=True)
+        if not r.ok:
+            raise Exception("Could not retrieve attachment")
         zip_dir = os.path.join(inbox, 'attachment.zip')
         with open(zip_dir, 'wb+') as fh:
-            if not r.ok:
-                raise Exception("Could not retrieve attachment")
 
             for block in r.iter_content(1024):
                 if not block:
@@ -78,7 +78,7 @@ class ExecutionCallback(object):
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
         url = "%s/execution/%s/results/%s" % (service, execution_id, token)
         files = [("results", open(zip_file, "rb"))]
-        requests.post(url, files=files, data=data)
+        return requests.post(url, files=files, data=data)
 
     def __call__(self, ch, method, properties, body):
         logger.info('received %r', body)
@@ -170,15 +170,7 @@ def zipdir(path, zipf, root_folder):
 
 
 def serve(config):
-    credentials = pika.PlainCredentials(
-        config.get('AMQP', 'USER'),
-        config.get('AMQP', 'PASSWORD'),
-    )
-    parameters = pika.ConnectionParameters(
-        host=config.get('AMQP', 'HOSTNAME'),
-        credentials=credentials,
-    )
-    connection = pika.BlockingConnection(parameters)
+    connection = get_connection(config)
     channel = connection.channel()
 
     queue_name = config.get('QUEUES', 'JOBS')
@@ -196,7 +188,21 @@ def serve(config):
 
     channel.start_consuming()
 
-if __name__ == '__main__':
+
+def get_connection(config):
+    credentials = pika.PlainCredentials(
+        config.get('AMQP', 'USER'),
+        config.get('AMQP', 'PASSWORD'),
+    )
+    parameters = pika.ConnectionParameters(
+        host=config.get('AMQP', 'HOSTNAME'),
+        credentials=credentials,
+    )
+    connection = pika.BlockingConnection(parameters)
+    return connection
+
+
+def prepare_config():
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--config-file', type=str,
                         dest='config', help='configuration file')
@@ -210,5 +216,13 @@ if __name__ == '__main__':
 
     config_parser = configparser.ConfigParser()
     config_parser.read([str(config_file), ])
+    return config_parser
 
-    serve(config_parser)
+
+def main():
+    config = prepare_config()
+    serve(config)
+
+
+if __name__ == '__main__':
+    main()
