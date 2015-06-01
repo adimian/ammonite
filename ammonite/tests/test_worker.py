@@ -210,5 +210,5 @@ def test_call(execution):
     execution(mockChannel(), mockMethod(), None,
               json.dumps(body).encode(encoding='utf-8'))
     expected_data = {'io': 0, 'cpu': 0, 'state': 'failed',
-                     'memory': 0, 'response': 1}
+                     'memory': 0, 'response':-1}
     assert MOCK_POST_REQUEST[1].data == expected_data

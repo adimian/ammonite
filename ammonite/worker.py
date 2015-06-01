@@ -102,25 +102,25 @@ class ExecutionCallback(object):
         # create_container fail if image is not pulled first:
         docker_client.pull(image_name, insecure_registry=True)
         mem_limit = self.config.get('DOCKER', 'MEMORY_LIMIT')
-        container = docker_client.create_container(image=image_name,
-                                                   command=recipe['command'],
-                                                   volumes=[inbox, outbox],
-                                                   mem_limit=mem_limit)
-        logger.info("finished creating container")
-
-        logger.info('starting job')
-        state = "done"
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
         log_url = '%s/execution/%s/log/%s' % (service,
                                               recipe['execution'],
                                               recipe['result_token'])
+        state = "done"
+        response = -1
+
         try:
+            container = docker_client.create_container(image=image_name,
+                                                       command=recipe['command'],
+                                                       volumes=[inbox, outbox],
+                                                       mem_limit=mem_limit)
+            logger.info("finished creating container")
+            logger.info('starting job')
             docker_client.start(container=container.get('Id'),
                                 binds={inbox: {'bind': '/inbox',
                                                'ro': True},
                                 outbox: {'bind': '/outbox',
                                          'ro': False}})
-
             logs = docker_client.logs(container.get('Id'),
                                       stdout=True,
                                       stderr=True,
@@ -129,12 +129,17 @@ class ExecutionCallback(object):
             for log in logs:
                 self.send_logs(log, log_url)
 
+            response = docker_client.wait(container=container.get('Id'))
+            logger.info('finished job with response: %s' % response)
+        except docker.errors.APIError as e:
+            state = 'failed'
+            logger.critical("Docker API error: %s" % e)
+            self.send_logs(e, log_url)
         except Exception as e:
             state = "failed"
+            logger.critical("Exception: %s" % e)
             self.send_logs(e, log_url)
         self.send_logs("", log_url, force=True)
-        response = docker_client.wait(container=container.get('Id'))
-        logger.info('finished job with response: %s' % response)
 
         logger.info('uploading results')
         data = {"state": state,
