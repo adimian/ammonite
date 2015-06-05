@@ -159,9 +159,10 @@ class ExecutionCallback(object):
         logger.info(log)
         # prevent from flooding the kabuto http server by
         # sending sporadic updates instead of each line separate
-        self.log_buffer.append(log)
+        self.log_buffer.append(str(log))
         if len(self.log_buffer) >= 20 or force:
-            requests.post(url, data={"log_line": self.log_buffer})
+            logs = json.dumps(self.log_buffer)
+            requests.post(url, data={"log_line": logs})
             self.log_buffer = []
 
 
