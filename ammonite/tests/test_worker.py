@@ -169,7 +169,8 @@ def test_send_logs(execution):
     execution.send_logs(log_line, "some_url", force=True)
     assert execution.log_buffer == []
     assert len(MOCK_POST_REQUEST) == 1
-    assert MOCK_POST_REQUEST[0].data == {"log_line": [log_line, log_line]}
+    assert MOCK_POST_REQUEST[0].data == {"log_line": json.dumps([log_line,
+                                                                 log_line])}
 
 
 @patch('requests.get', mockGetRequest)
@@ -198,7 +199,9 @@ def test_call(execution):
     assert len(MOCK_GET_REQUEST) == 1
     assert len(MOCK_POST_REQUEST) == 2
 
-    expected_log = {'log_line': ['log line one', 'log line two', '']}
+    expected_log = {'log_line': json.dumps(['log line one',
+                                            'log line two',
+                                            ''])}
     expected_data = {'io': 0, 'cpu': 0, 'state': 'done',
                      'memory': 0, 'response': 0}
     assert MOCK_POST_REQUEST[0].data == expected_log
