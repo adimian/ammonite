@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import zipfile
+import time
 
 import docker
 import pika
@@ -204,7 +205,26 @@ def get_connection(config):
         host=config.get('AMQP', 'HOSTNAME'),
         credentials=credentials,
     )
-    connection = pika.BlockingConnection(parameters)
+
+    def connect(timeout):
+        try:
+            connection = pika.BlockingConnection(parameters)
+        except pika.exceptions.AMQPConnectionError as error:
+            logger.error("Could not connect. Retrying in %ss" % timeout)
+            time.sleep(timeout)
+            return False, error
+        return True, connection
+
+    timeout = 1
+    while timeout <= 8:
+        connected, connection = connect(timeout)
+        if connected:
+            break
+        else:
+            timeout = timeout * 2
+
+    if not connected:
+        raise connection
     return connection
 
 
