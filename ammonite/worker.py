@@ -7,6 +7,7 @@ import sys
 import tempfile
 import zipfile
 import time
+import uuid
 
 import docker
 import pika
@@ -24,6 +25,9 @@ class ExecutionCallback(object):
         self.connection = connection
         self.config = config
         self.log_buffer = []
+        self.root_dir = os.environ.get('AMMONITE_PATH', None)
+        if not self.root_dir:
+            logger.info("Environment variable AMMONITE_PATH not set")
 
     def get_docker_client(self):
         client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
@@ -44,7 +48,14 @@ class ExecutionCallback(object):
                               properties=properties)
 
     def _create_temp_dir(self, direction):
-        return tempfile.mkdtemp(prefix='ammonite-%s-' % direction)
+        if self.root_dir:
+            dir_name = 'ammonite-%s-%s' % (direction, uuid.uuid4())
+            dir_path = os.path.join(self.root_dir, dir_name)
+            os.mkdir(dir_path)
+        else:
+            dir_path = tempfile.mkdtemp(prefix='ammonite-%s-' % direction)
+        logger.info('Creating %s dir %s' % (direction, dir_path))
+        return dir_path
 
     def create_inbox(self):
         return self._create_temp_dir(direction='inbox')
@@ -120,8 +131,8 @@ class ExecutionCallback(object):
             docker_client.start(container=container.get('Id'),
                                 binds={inbox: {'bind': '/inbox',
                                                'ro': True},
-                                outbox: {'bind': '/outbox',
-                                         'ro': False}})
+                                       outbox: {'bind': '/outbox',
+                                                'ro': False}})
             logs = docker_client.logs(container.get('Id'),
                                       stdout=True,
                                       stderr=True,

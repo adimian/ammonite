@@ -5,6 +5,7 @@ import pytest
 import os
 import shutil
 import json
+import tempfile
 
 ROOT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
 CONF_PATH = os.path.join(ROOT_DIR, "data", "test_config.cfg")
@@ -137,7 +138,9 @@ def test_populate_inbox(execution):
         files = os.listdir(inbox)
         assert len(files) == 2
         assert sorted(["file1.txt", "file2.txt"]) == sorted(files)
-        pytest.raises(Exception, execution.populate_inbox, inbox, "1", "false_token")
+        pytest.raises(Exception,
+                      execution.populate_inbox, inbox,
+                      "1", "false_token")
         shutil.rmtree(inbox)
 
 
@@ -215,3 +218,27 @@ def test_call(execution):
     expected_data = {'io': 0, 'cpu': 0, 'state': 'failed',
                      'memory': 0, 'response':-1}
     assert MOCK_POST_REQUEST[1].data == expected_data
+
+
+@patch('pika.PlainCredentials')
+@patch('pika.ConnectionParameters')
+@patch('pika.BlockingConnection')
+def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
+    testargs = ["ammonite.py", "-f", CONF_PATH]
+    with patch('sys.argv', testargs):
+        config = prepare_config()
+        execution = ExecutionCallback(get_connection(config), config)
+    path = execution._create_temp_dir("inbox")
+    temp_path = tempfile.mkdtemp(prefix='ammonite-')
+    assert path.startswith("%s/ammonite-inbox" % os.path.dirname(temp_path))
+
+    testargs = ["ammonite.py", "-f", CONF_PATH]
+    ammonite_path = os.path.join(ROOT_DIR, "data")
+    os.environ["AMMONITE_PATH"] = ammonite_path
+    with patch('sys.argv', testargs):
+        config = prepare_config()
+        execution = ExecutionCallback(get_connection(config), config)
+    path = execution._create_temp_dir("inbox")
+    assert path.startswith(ammonite_path)
+    shutil.rmtree(temp_path)
+    shutil.rmtree(path)
