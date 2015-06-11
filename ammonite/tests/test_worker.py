@@ -234,7 +234,7 @@ def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
 
     testargs = ["ammonite.py", "-f", CONF_PATH]
     ammonite_path = os.path.join(ROOT_DIR, "data")
-    os.environ["AMMONITE_PATH"] = ammonite_path
+    os.environ["AMMONITE_BOXES_DIR"] = ammonite_path
     with patch('sys.argv', testargs):
         config = prepare_config()
         execution = ExecutionCallback(get_connection(config), config)

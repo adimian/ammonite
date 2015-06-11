@@ -25,9 +25,9 @@ class ExecutionCallback(object):
         self.connection = connection
         self.config = config
         self.log_buffer = []
-        self.root_dir = os.environ.get('AMMONITE_PATH', None)
+        self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
         if not self.root_dir:
-            logger.info("Environment variable AMMONITE_PATH not set")
+            logger.info("Environment variable AMMONITE_BOXES_DIR not set")
 
     def get_docker_client(self):
         client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
