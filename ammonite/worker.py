@@ -25,6 +25,7 @@ class ExecutionCallback(object):
         self.connection = connection
         self.config = config
         self.log_buffer = []
+        self.last_sent_log_time = time.time()
         self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
         if not self.root_dir:
             logger.info("Environment variable AMMONITE_BOXES_DIR not set")
@@ -93,6 +94,8 @@ class ExecutionCallback(object):
         return requests.post(url, files=files, data=data)
 
     def __call__(self, ch, method, properties, body):
+#         ch.basic_ack(delivery_tag=method.delivery_tag)
+#         return
         logger.info('received %r', body)
         logger.info('starting to work')
 
@@ -169,12 +172,18 @@ class ExecutionCallback(object):
 
     def send_logs(self, log, url, force=False):
         logger.info(log)
+        # forcing if last sending was longer than a second
+        send_log_time = time.time()
+        if not force:
+            force = (send_log_time - self.last_sent_log_time) > 1
         # prevent from flooding the kabuto http server by
         # sending sporadic updates instead of each line separate
         self.log_buffer.append(str(log))
         if len(self.log_buffer) >= 20 or force:
             logs = json.dumps(self.log_buffer)
+            logger.info('Sending logs')
             requests.post(url, data={"log_line": logs})
+            self.last_sent_log_time = send_log_time
             self.log_buffer = []
 
 
