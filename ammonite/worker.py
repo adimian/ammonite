@@ -82,20 +82,21 @@ class ExecutionCallback(object):
             zf.extractall(inbox)
         os.remove(zip_dir)
 
-    def upload_output(self, outbox, execution_id, token, data):
+    def prepare_output(self, outbox, token):
         zip_file = "%s.zip" % os.path.join(tempfile.mkdtemp(), token)
         zipf = zipfile.ZipFile(zip_file, 'w')
         zipdir(outbox, zipf, root_folder=outbox)
         zipf.close()
         logger.info("creating zip from %s" % outbox)
+        files = [("results", open(zip_file, "rb"))]
+        return files
+
+    def upload_output(self, execution_id, token, data, files):
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
         url = "%s/execution/%s/results/%s" % (service, execution_id, token)
-        files = [("results", open(zip_file, "rb"))]
         return requests.post(url, files=files, data=data)
 
     def __call__(self, ch, method, properties, body):
-#         ch.basic_ack(delivery_tag=method.delivery_tag)
-#         return
         logger.info('received %r', body)
         logger.info('starting to work')
 
@@ -154,7 +155,6 @@ class ExecutionCallback(object):
             state = "failed"
             logger.critical("Exception: %s" % e)
             self.send_logs(e, log_url)
-        self.send_logs("", log_url, force=True)
 
         logger.info('uploading results')
         data = {"state": state,
@@ -162,9 +162,25 @@ class ExecutionCallback(object):
                 "cpu": 0,
                 "memory": 0,
                 "io": 0}
-        self.upload_output(outbox, recipe['execution'],
+
+        try:
+            files = self.prepare_output(outbox, recipe['result_token'])
+        except UnicodeEncodeError:
+            data["state"] = 'failed'
+            message = ("A character could not be decoded in an output "
+                       "filename. Make sure your filenames are OS friendly")
+            self.send_logs(message, log_url)
+            files = []
+        except Exception as e:
+            data["state"] = 'failed'
+            message = ("Something unexpected happened: %s" % e)
+            self.send_logs(message, log_url)
+            files = []
+        self.upload_output(recipe['execution'],
                            recipe['result_token'],
-                           data)
+                           data, files)
+
+        self.send_logs("", log_url, force=True)
         logger.info('finished uploading results')
 
         logger.info('done working')

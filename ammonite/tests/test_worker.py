@@ -74,7 +74,6 @@ class mockGetRequest(object):
 
 class mockPostRequest(object):
     def __init__(self, url, files=None, data=None):
-        print("adding")
         global MOCK_POST_REQUEST
         MOCK_POST_REQUEST.append(self)
         self.url = url
@@ -152,7 +151,8 @@ def test_upload_output(execution):
                 "cpu": 0,
                 "memory": 0,
                 "io": 0}
-        r = execution.upload_output(outbox, "1", "some_token", data)
+        files = execution.prepare_output(outbox, "some_token")
+        r = execution.upload_output("1", "some_token", data, files)
         files = dict(r.files)
         assert files.get('results')
         assert "some_token.zip" in files['results'].name
@@ -176,6 +176,15 @@ def test_send_logs(execution):
                                                                  log_line])}
 
 
+class mockChannel(object):
+    def basic_ack(self, *args, **kwargs):
+        pass
+
+
+class mockMethod(object):
+    delivery_tag = None
+
+
 @patch('requests.get', mockGetRequest)
 @patch('requests.post', mockPostRequest)
 @patch('docker.Client', mockClient)
@@ -184,13 +193,6 @@ def test_call(execution):
     global MOCK_POST_REQUEST
     MOCK_GET_REQUEST = []
     MOCK_POST_REQUEST = []
-
-    class mockChannel(object):
-        def basic_ack(self, *args, **kwargs):
-            pass
-
-    class mockMethod(object):
-        delivery_tag = None
 
     body = {'execution': 1,
             'image': "some_image",
@@ -207,8 +209,9 @@ def test_call(execution):
                                             ''])}
     expected_data = {'io': 0, 'cpu': 0, 'state': 'done',
                      'memory': 0, 'response': 0}
-    assert MOCK_POST_REQUEST[0].data == expected_log
-    assert MOCK_POST_REQUEST[1].data == expected_data
+
+    assert MOCK_POST_REQUEST[1].data == expected_log
+    assert MOCK_POST_REQUEST[0].data == expected_data
 
     MOCK_GET_REQUEST = []
     MOCK_POST_REQUEST = []
@@ -217,7 +220,7 @@ def test_call(execution):
               json.dumps(body).encode(encoding='utf-8'))
     expected_data = {'io': 0, 'cpu': 0, 'state': 'failed',
                      'memory': 0, 'response':-1}
-    assert MOCK_POST_REQUEST[1].data == expected_data
+    assert MOCK_POST_REQUEST[0].data == expected_data
 
 
 @patch('pika.PlainCredentials')
@@ -242,3 +245,28 @@ def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
     assert path.startswith(ammonite_path)
     shutil.rmtree(temp_path)
     shutil.rmtree(path)
+
+
+@patch('requests.get', mockGetRequest)
+@patch('requests.post', mockPostRequest)
+@patch('docker.Client', mockClient)
+def test_unicode_error(execution):
+    def prepare_output(*args, **kwargs):
+        raise UnicodeEncodeError('hitchhiker', "", 42, 43,
+                                 'the universe and everything else')
+
+    global MOCK_GET_REQUEST
+    global MOCK_POST_REQUEST
+    MOCK_GET_REQUEST = []
+    MOCK_POST_REQUEST = []
+    with patch("worker.ExecutionCallback.prepare_output", prepare_output):
+        body = {'execution': 1,
+                'image': "some_image",
+                'command': "some_command",
+                'attachment_token': "some_token",
+                'result_token': "some_result_token"}
+        execution(mockChannel(), mockMethod(), None,
+                  json.dumps(body).encode(encoding='utf-8'))
+        expected_log_line = ("A character could not be decoded in an output "
+                             "filename. Make sure your filenames are OS friendly")
+        assert expected_log_line in MOCK_POST_REQUEST[1].data["log_line"]
