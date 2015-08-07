@@ -12,11 +12,15 @@ import uuid
 import docker
 import pika
 import requests
+import raven
+
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
 logger = logging.getLogger(__name__)
 logger.level = logging.DEBUG
+
+SENTRY_CLIENT = None
 
 
 class ExecutionCallback(object):
@@ -96,11 +100,38 @@ class ExecutionCallback(object):
         url = "%s/execution/%s/results/%s" % (service, execution_id, token)
         return requests.post(url, files=files, data=data)
 
+    def notify_error(self, recipe, log_url):
+        message = "An unexpected error occured. Please contact your admin"
+        self.send_logs(message, log_url, force=True)
+        data = {"state": 'failed',
+                "response":-1,
+                "cpu": 0,
+                "memory": 0,
+                "io": 0}
+        self.upload_output(recipe['execution'],
+                           recipe['result_token'],
+                           data, [])
+
     def __call__(self, ch, method, properties, body):
         logger.info('received %r', body)
-        logger.info('starting to work')
-
         recipe = json.loads(body.decode('utf-8'))
+        service = self.config.get('QUEUES', 'KABUTO_SERVICE')
+        log_url = '%s/execution/%s/log/%s' % (service,
+                                              recipe['execution'],
+                                              recipe['result_token'])
+        try:
+            self._call(ch, method, properties, recipe, log_url)
+        except Exception as e:
+            print(e)
+            # notify error to kabuto
+            self.notify_error(recipe, log_url)
+            # skip job
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            if SENTRY_CLIENT:
+                SENTRY_CLIENT.captureException()
+
+    def _call(self, ch, method, properties, recipe, log_url):
+        logger.info('starting to work')
 
         inbox = self.create_inbox()
         outbox = self.create_outbox()
@@ -118,10 +149,7 @@ class ExecutionCallback(object):
         # create_container fail if image is not pulled first:
         docker_client.pull(image_name, insecure_registry=True)
         mem_limit = self.config.get('DOCKER', 'MEMORY_LIMIT')
-        service = self.config.get('QUEUES', 'KABUTO_SERVICE')
-        log_url = '%s/execution/%s/log/%s' % (service,
-                                              recipe['execution'],
-                                              recipe['result_token'])
+
         state = "done"
         response = -1
 
@@ -270,8 +298,8 @@ def prepare_config():
                         dest='config', help='configuration file')
     args = parser.parse_args()
 
-    config_file = args.config
-    if config_file is None:
+    config_file = args.config or os.environ.get('AMMONITE_CONFIG', '')
+    if not config_file:
         parser.error('no configuration file provided')
     if not os.path.exists(config_file):
         parser.error('configuration file %s does not exist' % config_file)
@@ -283,7 +311,20 @@ def prepare_config():
 
 def main():
     config = prepare_config()
-    serve(config)
+    try:
+        sentry_dsn = config.get('SENTRY', 'SENTRY_DSN')
+    except configparser.NoSectionError:
+        sentry_dsn = None
+
+    if sentry_dsn:
+        global SENTRY_CLIENT
+        SENTRY_CLIENT = raven.Client(dsn=sentry_dsn)
+        try:
+            serve(config)
+        except Exception:
+            SENTRY_CLIENT.captureException()
+    else:
+        serve(config)
 
 
 if __name__ == '__main__':

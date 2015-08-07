@@ -269,4 +269,7 @@ def test_unicode_error(execution):
                   json.dumps(body).encode(encoding='utf-8'))
         expected_log_line = ("A character could not be decoded in an output "
                              "filename. Make sure your filenames are OS friendly")
+        print(MOCK_POST_REQUEST)
+        print(MOCK_POST_REQUEST[0].data)
+        print(MOCK_POST_REQUEST[1].data)
         assert expected_log_line in MOCK_POST_REQUEST[1].data["log_line"]
