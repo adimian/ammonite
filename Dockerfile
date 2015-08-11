@@ -18,5 +18,7 @@ ENV AMMONITE_CONFIG=/etc/ammonite/config.cfg
 
 WORKDIR /source
 
+RUN echo docker:x:999:www-data >> /etc/group
+
 USER www-data
 CMD python3 /source/ammonite/worker.py
