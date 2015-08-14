@@ -142,8 +142,7 @@ class ExecutionCallback(object):
         logger.info('finished downloading attachments')
 
         docker_client = self.get_docker_client()
-        image_name = '/'.join((self.config.get('DOCKER', 'REGISTRY_URL'),
-                               recipe['image']))
+        image_name = recipe['image_tag']
 
         logger.info("creating container")
         # create_container fail if image is not pulled first:

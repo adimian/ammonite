@@ -198,7 +198,8 @@ def test_call(execution):
             'image': "some_image",
             'command': "some_command",
             'attachment_token': "some_token",
-            'result_token': "some_result_token"}
+            'result_token': "some_result_token",
+            'image_tag': "some_tag"}
     execution(mockChannel(), mockMethod(), None,
               json.dumps(body).encode(encoding='utf-8'))
     assert len(MOCK_GET_REQUEST) == 1
@@ -215,11 +216,12 @@ def test_call(execution):
 
     MOCK_GET_REQUEST = []
     MOCK_POST_REQUEST = []
-    body['image'] = "throw_error"
+    body['image_tag'] = "throw_error"
     execution(mockChannel(), mockMethod(), None,
               json.dumps(body).encode(encoding='utf-8'))
     expected_data = {'io': 0, 'cpu': 0, 'state': 'failed',
                      'memory': 0, 'response':-1}
+    print(MOCK_POST_REQUEST[0].data)
     assert MOCK_POST_REQUEST[0].data == expected_data
 
 
@@ -264,7 +266,8 @@ def test_unicode_error(execution):
                 'image': "some_image",
                 'command': "some_command",
                 'attachment_token': "some_token",
-                'result_token': "some_result_token"}
+                'result_token': "some_result_token",
+                'image_tag': "some_tag"}
         execution(mockChannel(), mockMethod(), None,
                   json.dumps(body).encode(encoding='utf-8'))
         expected_log_line = ("A character could not be decoded in an output "
