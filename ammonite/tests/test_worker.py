@@ -1,5 +1,6 @@
-from worker import (serve, prepare_config, main, ExecutionCallback,
-                    get_connection)
+from ammonite.worker import main
+from ammonite.job_handler import ExecutionCallback
+from ammonite.utils import get_config
 from unittest.mock import patch
 import pytest
 import os
@@ -88,22 +89,22 @@ class mockPostRequest(object):
 def execution(pc_mock, cp_mock, bc_mock):
     testargs = ["ammonite.py", "-f", CONF_PATH]
     with patch('sys.argv', testargs):
-        config = prepare_config()
-        return ExecutionCallback(get_connection(config), config)
+        config = get_config()
+        return ExecutionCallback(config)
 
 
 def test_config():
     testargs = ["ammonite.py"]
     with patch('sys.argv', testargs):
-        pytest.raises(SystemExit, prepare_config)
+        pytest.raises(SystemExit, get_config)
 
     testargs = ["ammonite.py", "-f", "does/not/exist"]
     with patch('sys.argv', testargs):
-        pytest.raises(SystemExit, prepare_config)
+        pytest.raises(SystemExit, get_config)
 
     testargs = ["ammonite.py", "-f", CONF_PATH]
     with patch('sys.argv', testargs):
-        config = prepare_config()
+        config = get_config()
         assert config.get('QUEUES', 'JOBS') == "jobs"
         assert config.get('AMQP', 'USER') == "ammonite"
         assert config.get('WORKER', 'SLOTS') == '2'
@@ -124,10 +125,6 @@ def test_get_docker_client(execution):
         client = execution.get_docker_client()
         assert client.login == "adimian"
         assert client.password == "adimian"
-
-
-def test_put_in_message_queue(execution):
-    execution.put_in_message_queue(None, None)
 
 
 def test_populate_inbox(execution):
@@ -231,8 +228,8 @@ def test_call(execution):
 def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
     testargs = ["ammonite.py", "-f", CONF_PATH]
     with patch('sys.argv', testargs):
-        config = prepare_config()
-        execution = ExecutionCallback(get_connection(config), config)
+        config = get_config()
+        execution = ExecutionCallback(config)
     path = execution._create_temp_dir("inbox")
     temp_path = tempfile.mkdtemp(prefix='ammonite-')
     assert path.startswith("%s/ammonite-inbox" % os.path.dirname(temp_path))
@@ -241,8 +238,8 @@ def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
     ammonite_path = os.path.join(ROOT_DIR, "data")
     os.environ["AMMONITE_BOXES_DIR"] = ammonite_path
     with patch('sys.argv', testargs):
-        config = prepare_config()
-        execution = ExecutionCallback(get_connection(config), config)
+        config = get_config()
+        execution = ExecutionCallback(config)
     path = execution._create_temp_dir("inbox")
     assert path.startswith(ammonite_path)
     shutil.rmtree(temp_path)
