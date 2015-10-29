@@ -6,11 +6,10 @@ MAX_RETRIES = 8
 
 
 class Consumer(object):
-    def __init__(self, config):
+    def __init__(self, config,):
         self.username = config.get('AMQP', 'USER')
         self.password = config.get('AMQP', 'PASSWORD')
         self.hostname = config.get('AMQP', 'HOSTNAME')
-        self.queue_name = config.get('QUEUES', 'JOBS')
         self.slots = int(config.get('WORKER', 'SLOTS'))
         self.config = config
 
@@ -38,20 +37,24 @@ class Consumer(object):
                 logger.error("Could not connect. Retrying in %ss" % timeout)
         return connection
 
-    def consume(self, handler):
+    def consume(self, handler, queue_name, broadcast=False):
         connection = self.get_connection()
         channel = connection.channel()
 
-        queue_name = self.queue_name
+        if broadcast:
+            exchange = queue_name
+            channel.exchange_declare(exchange=exchange,
+                                     type='fanout')
+            result = channel.queue_declare(exclusive=True)
+            queue_name = result.method.queue
+            channel.queue_bind(exchange=exchange,
+                               queue=queue_name)
+        else:
+            if not queue_name:
+                raise Exception("non broadcast consumes need a queue name")
+            channel.queue_declare(queue=queue_name, durable=True)
+            channel.basic_qos(prefetch_count=int(self.slots))
 
-        channel.queue_declare(queue=queue_name, durable=True)
-        logger.info('---')
-        logger.info('--- Ammonite worker ready.')
-        logger.info('--- Waiting for messages.')
-        logger.info('--- To exit press CTRL+C')
-        logger.info('---')
-
-        channel.basic_qos(prefetch_count=int(self.slots))
         channel.basic_consume(handler(self.config),
                               queue=queue_name)
         channel.start_consuming()

@@ -1,5 +1,5 @@
 from ammonite.worker import main
-from ammonite.job_handler import ExecutionCallback
+from ammonite.callback import ExecutionCallback
 from ammonite.utils import get_config
 from unittest.mock import patch
 import pytest
@@ -130,7 +130,7 @@ def test_get_docker_client(execution):
 def test_populate_inbox(execution):
     with patch('requests.get', mockGetRequest):
         inbox = execution.create_inbox()
-        execution.populate_inbox(inbox, "1", "some_token")
+        execution.populate_inbox(inbox, "1", "some_token", "some_container_id")
         files = os.listdir(inbox)
         assert len(files) == 2
         assert sorted(["file1.txt", "file2.txt"]) == sorted(files)

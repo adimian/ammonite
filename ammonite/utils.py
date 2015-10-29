@@ -40,3 +40,12 @@ def get_config():
     config_parser = configparser.ConfigParser()
     config_parser.read([str(config_file), ])
     return config_parser
+
+
+def zipdir(path, zipf, root_folder):
+    # Still need to find a clean way to write empty folders,
+    # as this is not being done
+    for root, _, files in os.walk(path):
+        for fh in files:
+            file_path = os.path.join(root, fh)
+            zipf.write(file_path, os.path.relpath(file_path, root_folder))

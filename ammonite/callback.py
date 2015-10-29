@@ -9,7 +9,7 @@ import uuid
 
 import docker
 import requests
-from ammonite.utils import SENTRY_CLIENT
+from ammonite.utils import SENTRY_CLIENT, zipdir
 
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -18,16 +18,7 @@ logger = logging.getLogger("ammonite.worker")
 logger.level = logging.DEBUG
 
 
-class ExecutionCallback(object):
-
-    def __init__(self, config):
-        self.config = config
-        self.log_buffer = []
-        self.last_sent_log_time = time.time()
-        self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
-        if not self.root_dir:
-            logger.info("Environment variable AMMONITE_BOXES_DIR not set")
-
+class Base(object):
     def get_docker_client(self):
         client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
         if self.config.get('DOCKER', 'LOGIN'):
@@ -35,6 +26,43 @@ class ExecutionCallback(object):
                          self.config.get('DOCKER', 'PASSWORD'),
                          registry=self.config.get('DOCKER', 'REGISTRY'))
         return client
+
+
+class KillCallback(Base):
+    def __init__(self, config):
+        self.config = config
+
+    def __call__(self, ch, method, properties, body):
+        try:
+            recipe = json.loads(body.decode('utf-8'))
+            self.kill_container(recipe['container_id'])
+        except docker.errors.APIError as e:
+            logger.critical("Docker API error: %s" % e)
+        except Exception as e:
+            logger.critical("Exception: %s" % e)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            if SENTRY_CLIENT:
+                SENTRY_CLIENT.captureException()
+
+    def kill_container(self, cid):
+        logger.info("received kill signal for container '%s'" % cid)
+        logger.info("requesting local container ids")
+        docker_client = self.get_docker_client()
+        if cid in [cont['Id'] for cont in docker_client.containers()]:
+            docker_client.kill(cid)
+            logger.info("container killed" % cid)
+        else:
+            logger.info("container not on this machine")
+
+
+class ExecutionCallback(Base):
+    def __init__(self, config):
+        self.config = config
+        self.log_buffer = []
+        self.last_sent_log_time = time.time()
+        self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
+        if not self.root_dir:
+            logger.info("Environment variable AMMONITE_BOXES_DIR not set")
 
     def _create_temp_dir(self, direction):
         if self.root_dir:
@@ -52,9 +80,10 @@ class ExecutionCallback(object):
     def create_outbox(self):
         return self._create_temp_dir(direction='outbox')
 
-    def populate_inbox(self, inbox, execution_id, token):
+    def populate_inbox(self, inbox, execution_id, token, container_id):
         service = self.config.get('QUEUES', 'KABUTO_SERVICE')
-        url = "%s/execution/%s/attachments/%s" % (service, execution_id, token)
+        url = "%s/execution/%s/attachments/%s/%s" % (service, execution_id,
+                                                     token, container_id)
         r = requests.get(url, stream=True)
         if not r.ok:
             raise Exception("Could not retrieve attachment")
@@ -123,10 +152,6 @@ class ExecutionCallback(object):
         inbox = self.create_inbox()
         outbox = self.create_outbox()
 
-        logger.info('downloading attachments')
-        self.populate_inbox(inbox, recipe['execution'],
-                            recipe['attachment_token'])
-        logger.info('finished downloading attachments')
 
         docker_client = self.get_docker_client()
         image_name = recipe['image_tag']
@@ -145,6 +170,13 @@ class ExecutionCallback(object):
                                                        volumes=[inbox, outbox],
                                                        mem_limit=mem_limit)
             logger.info("finished creating container")
+
+            logger.info('downloading attachments')
+            self.populate_inbox(inbox, recipe['execution'],
+                                recipe['attachment_token'],
+                                container.get('Id'))
+            logger.info('finished downloading attachments')
+
             logger.info('starting job')
             docker_client.start(container=container.get('Id'),
                                 binds={inbox: {'bind': '/inbox',
@@ -215,12 +247,3 @@ class ExecutionCallback(object):
             requests.post(url, data={"log_line": logs})
             self.last_sent_log_time = send_log_time
             self.log_buffer = []
-
-
-def zipdir(path, zipf, root_folder):
-    # Still need to find a clean way to write empty folders,
-    # as this is not being done
-    for root, _, files in os.walk(path):
-        for fh in files:
-            file_path = os.path.join(root, fh)
-            zipf.write(file_path, os.path.relpath(file_path, root_folder))
