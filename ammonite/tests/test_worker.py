@@ -1,5 +1,5 @@
 from ammonite.worker import main
-from ammonite.callback import ExecutionCallback
+from ammonite.callback import ExecutionCallback, KillCallback
 from ammonite.utils import get_config
 from unittest.mock import patch
 import pytest
@@ -7,6 +7,8 @@ import os
 import shutil
 import json
 import tempfile
+from testfixtures import LogCapture
+import docker
 
 ROOT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
 CONF_PATH = os.path.join(ROOT_DIR, "data", "test_config.cfg")
@@ -50,6 +52,12 @@ class mockClient(object):
             return 1
         return 0
 
+    def containers(self, *args, **kwargs):
+        return [{"Id": 1}]
+
+    def kill(self, *args, **kwargs):
+        return None
+
 
 class mockGetRequest(object):
     def __init__(self, url, stream):
@@ -91,6 +99,17 @@ def execution(pc_mock, cp_mock, bc_mock):
     with patch('sys.argv', testargs):
         config = get_config()
         return ExecutionCallback(config)
+
+
+@patch('pika.PlainCredentials')
+@patch('pika.ConnectionParameters')
+@patch('pika.BlockingConnection')
+@pytest.fixture
+def kill_execution(pc_mock, cp_mock, bc_mock):
+    testargs = ["ammonite.py", "-f", CONF_PATH]
+    with patch('sys.argv', testargs):
+        config = get_config()
+        return KillCallback(config)
 
 
 def test_config():
@@ -269,7 +288,79 @@ def test_unicode_error(execution):
                   json.dumps(body).encode(encoding='utf-8'))
         expected_log_line = ("A character could not be decoded in an output "
                              "filename. Make sure your filenames are OS friendly")
-        print(MOCK_POST_REQUEST)
-        print(MOCK_POST_REQUEST[0].data)
-        print(MOCK_POST_REQUEST[1].data)
         assert expected_log_line in MOCK_POST_REQUEST[1].data["log_line"]
+
+
+@patch('requests.get', mockGetRequest)
+@patch('requests.post', mockPostRequest)
+@patch('docker.Client', mockClient)
+def test_kill_job(kill_execution):
+    body = {'container_id': 1}
+    with LogCapture() as l:
+        kill_execution(mockChannel(), mockMethod(), None,
+                       json.dumps(body).encode(encoding='utf-8'))
+        expected = (("ammonite.worker", "INFO",
+                     "received kill signal for container '1'"),
+                    ("ammonite.worker", "INFO",
+                     "requesting local container ids"),
+                    ("ammonite.worker", "INFO",
+                     "container killed 1"))
+        l.check(*expected)
+
+
+@patch('requests.get', mockGetRequest)
+@patch('requests.post', mockPostRequest)
+@patch('docker.Client', mockClient)
+def test_kill_job_non_existing_container(kill_execution):
+    body = {'container_id': 2}
+    with LogCapture() as l:
+        kill_execution(mockChannel(), mockMethod(), None,
+                       json.dumps(body).encode(encoding='utf-8'))
+        expected = (("ammonite.worker", "INFO",
+                     "received kill signal for container '2'"),
+                    ("ammonite.worker", "INFO",
+                     "requesting local container ids"),
+                    ("ammonite.worker", "INFO",
+                     "container not on this machine"))
+        l.check(*expected)
+
+
+@patch('requests.get', mockGetRequest)
+@patch('requests.post', mockPostRequest)
+@patch('docker.Client', mockClient)
+def test_kill_job_docker_api_error(kill_execution):
+    body = {'container_id': 1}
+
+    class mockResponse(object):
+        status_code = 400
+        reason = "error"
+
+    def kill_container(*args, **kwargs):
+        raise docker.errors.APIError(response=mockResponse(), message="error",
+                                     explanation="error")
+
+    with patch("worker.KillCallback.kill_container", kill_container):
+        with LogCapture() as l:
+            kill_execution(mockChannel(), mockMethod(), None,
+                           json.dumps(body).encode(encoding='utf-8'))
+            expected = ("ammonite.worker", "CRITICAL",
+                        'Docker API error: 400 Client Error: error ("error")')
+            l.check(expected)
+
+
+@patch('requests.get', mockGetRequest)
+@patch('requests.post', mockPostRequest)
+@patch('docker.Client', mockClient)
+def test_kill_job_general_error(kill_execution):
+    body = {'container_id': 1}
+
+    def kill_container(*args, **kwargs):
+        raise Exception("some error")
+
+    with patch("worker.KillCallback.kill_container", kill_container):
+        with LogCapture() as l:
+            kill_execution(mockChannel(), mockMethod(), None,
+                           json.dumps(body).encode(encoding='utf-8'))
+            expected = ("ammonite.worker", "CRITICAL",
+                        'Exception: some error')
+            l.check(expected)

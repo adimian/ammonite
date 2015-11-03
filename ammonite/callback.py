@@ -50,7 +50,7 @@ class KillCallback(Base):
         docker_client = self.get_docker_client()
         if cid in [cont['Id'] for cont in docker_client.containers()]:
             docker_client.kill(cid)
-            logger.info("container killed" % cid)
+            logger.info("container killed %s" % cid)
         else:
             logger.info("container not on this machine")
 
@@ -151,7 +151,6 @@ class ExecutionCallback(Base):
 
         inbox = self.create_inbox()
         outbox = self.create_outbox()
-
 
         docker_client = self.get_docker_client()
         image_name = recipe['image_tag']
