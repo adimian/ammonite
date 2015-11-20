@@ -90,6 +90,27 @@ class mockPostRequest(object):
         self.data = data
 
 
+class mockSender(object):
+    def __init__(self):
+        self.messages = []
+        self.broadcast = []
+
+    def connect(self):
+        pass
+
+    def get_connection(self):
+        pass
+
+    def open_channel(self):
+        pass
+
+    def send(self, message, queue_name=None):
+        self.messages.append(message)
+
+    def broadcast(self, message, exchange_name=None):
+        self.broadcast.append(message)
+
+
 @patch('pika.PlainCredentials')
 @patch('pika.ConnectionParameters')
 @patch('pika.BlockingConnection')
@@ -98,7 +119,9 @@ def execution(pc_mock, cp_mock, bc_mock):
     testargs = ["ammonite.py", "-f", CONF_PATH]
     with patch('sys.argv', testargs):
         config = get_config()
-        return ExecutionCallback(config)
+    execution = ExecutionCallback(config)
+    execution.sender = mockSender()
+    return execution
 
 
 @patch('pika.PlainCredentials')
@@ -178,18 +201,15 @@ def test_upload_output(execution):
 
 @patch('requests.post', mockPostRequest)
 def test_send_logs(execution):
-    global MOCK_GET_REQUEST
-    global MOCK_POST_REQUEST
-    MOCK_GET_REQUEST = []
-    MOCK_POST_REQUEST = []
     log_line = "a log line"
-    execution.send_logs(log_line, "some_url", force=False)
+    execution.send_logs(log_line, force=False)
+    execution.recipe = {"execution": 1}
     assert execution.log_buffer == [log_line]
-    execution.send_logs(log_line, "some_url", force=True)
+    execution.send_logs(log_line, force=True)
     assert execution.log_buffer == []
-    assert len(MOCK_POST_REQUEST) == 1
-    assert MOCK_POST_REQUEST[0].data == {"log_line": json.dumps([log_line,
-                                                                 log_line])}
+
+    expected = [{'log_lines': ['a log line', 'a log line'], 'job_id': 1}]
+    assert expected == execution.sender.messages
 
 
 class mockChannel(object):
@@ -219,7 +239,7 @@ def test_call(execution):
     execution(mockChannel(), mockMethod(), None,
               json.dumps(body).encode(encoding='utf-8'))
     assert len(MOCK_GET_REQUEST) == 1
-    assert len(MOCK_POST_REQUEST) == 2
+    assert len(MOCK_POST_REQUEST) == 1
 
     expected_log = {'log_line': json.dumps(['log line one',
                                             'log line two',
@@ -227,7 +247,6 @@ def test_call(execution):
     expected_data = {'io': 0, 'cpu': 0, 'state': 'done',
                      'memory': 0, 'response': 0}
 
-    assert MOCK_POST_REQUEST[1].data == expected_log
     assert MOCK_POST_REQUEST[0].data == expected_data
 
     MOCK_GET_REQUEST = []
@@ -272,11 +291,6 @@ def test_unicode_error(execution):
     def prepare_output(*args, **kwargs):
         raise UnicodeEncodeError('hitchhiker', "", 42, 43,
                                  'the universe and everything else')
-
-    global MOCK_GET_REQUEST
-    global MOCK_POST_REQUEST
-    MOCK_GET_REQUEST = []
-    MOCK_POST_REQUEST = []
     with patch("worker.ExecutionCallback.prepare_output", prepare_output):
         body = {'execution': 1,
                 'image': "some_image",
@@ -284,11 +298,13 @@ def test_unicode_error(execution):
                 'attachment_token': "some_token",
                 'result_token': "some_result_token",
                 'image_tag': "some_tag"}
-        execution(mockChannel(), mockMethod(), None,
-                  json.dumps(body).encode(encoding='utf-8'))
-        expected_log_line = ("A character could not be decoded in an output "
-                             "filename. Make sure your filenames are OS friendly")
-        assert expected_log_line in MOCK_POST_REQUEST[1].data["log_line"]
+        expected = ('ammonite.worker', 'INFO',
+                    ('A character could not be decoded in an output filename.'
+                     ' Make sure your filenames are OS friendly'))
+        with LogCapture() as l:
+            execution(mockChannel(), mockMethod(), None,
+                      json.dumps(body).encode(encoding='utf-8'))
+            assert expected in tuple(l.actual())
 
 
 @patch('requests.get', mockGetRequest)
@@ -328,39 +344,39 @@ def test_kill_job_non_existing_container(kill_execution):
 @patch('requests.get', mockGetRequest)
 @patch('requests.post', mockPostRequest)
 @patch('docker.Client', mockClient)
-def test_kill_job_docker_api_error(kill_execution):
-    body = {'container_id': 1}
-
-    class mockResponse(object):
-        status_code = 400
-        reason = "error"
-
-    def kill_container(*args, **kwargs):
-        raise docker.errors.APIError(response=mockResponse(), message="error",
-                                     explanation="error")
-
-    with patch("worker.KillCallback.kill_container", kill_container):
-        with LogCapture() as l:
-            kill_execution(mockChannel(), mockMethod(), None,
-                           json.dumps(body).encode(encoding='utf-8'))
-            expected = ("ammonite.worker", "CRITICAL",
-                        'Docker API error: 400 Client Error: error ("error")')
-            l.check(expected)
-
-
-@patch('requests.get', mockGetRequest)
-@patch('requests.post', mockPostRequest)
-@patch('docker.Client', mockClient)
 def test_kill_job_general_error(kill_execution):
     body = {'container_id': 1}
 
     def kill_container(*args, **kwargs):
         raise Exception("some error")
 
-    with patch("worker.KillCallback.kill_container", kill_container):
+    with patch("worker.KillCallback.call", kill_container):
         with LogCapture() as l:
             kill_execution(mockChannel(), mockMethod(), None,
                            json.dumps(body).encode(encoding='utf-8'))
-            expected = ("ammonite.worker", "CRITICAL",
+            expected = ("ammonite.connection", "CRITICAL",
                         'Exception: some error')
             l.check(expected)
+
+
+@patch('pika.PlainCredentials')
+@patch('pika.ConnectionParameters')
+@patch('pika.BlockingConnection')
+def test_sender(a, b, c):
+    from ammonite.connection import Sender
+    sender = Sender("some_queue", {"AMQP_HOSTNAME": "",
+                                   "AMQP_USER": "",
+                                   "AMQP_PASSWORD": ""})
+    sender.send(['some message'])
+    sender.broadcast(['some message'])
+
+
+
+
+
+
+
+
+
+
+

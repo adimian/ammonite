@@ -1,6 +1,6 @@
 from ammonite.callback import ExecutionCallback, KillCallback
 from ammonite.utils import setup_sentry, get_config, logger
-from ammonite.connection import Consumer
+from ammonite.connection import Receiver
 from threading import Thread
 
 
@@ -14,10 +14,10 @@ def main():
     logger.info('--- To exit press CTRL+C')
     logger.info('---')
 
-    Thread(target=Consumer(config).consume,
-           args=(ExecutionCallback, config.get('QUEUES', 'JOBS'))).start()
-    Thread(target=Consumer(config).consume,
-           args=(KillCallback, config.get('QUEUES', 'KILL'), True)).start()
+    job_listener = Receiver(config.get('QUEUES', 'JOBS'), config)
+    kill_listener = Receiver(config.get('QUEUES', 'KILL'), config)
+    job_listener.threaded_listen(ExecutionCallback(config))
+    kill_listener.threaded_listen(KillCallback(config), True)
 
 
 if __name__ == '__main__':

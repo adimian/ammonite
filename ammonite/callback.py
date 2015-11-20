@@ -10,6 +10,7 @@ import uuid
 import docker
 import requests
 from ammonite.utils import SENTRY_CLIENT, zipdir
+from ammonite.connection import Sender, BaseHandler
 
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -18,7 +19,7 @@ logger = logging.getLogger("ammonite.worker")
 logger.level = logging.DEBUG
 
 
-class Base(object):
+class Base(BaseHandler):
     def get_docker_client(self):
         client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
         if self.config.get('DOCKER', 'LOGIN'):
@@ -32,19 +33,8 @@ class KillCallback(Base):
     def __init__(self, config):
         self.config = config
 
-    def __call__(self, ch, method, properties, body):
-        try:
-            recipe = json.loads(body.decode('utf-8'))
-            self.kill_container(recipe['container_id'])
-        except docker.errors.APIError as e:
-            logger.critical("Docker API error: %s" % e)
-        except Exception as e:
-            logger.critical("Exception: %s" % e)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            if SENTRY_CLIENT:
-                SENTRY_CLIENT.captureException()
-
-    def kill_container(self, cid):
+    def call(self, recipe):
+        cid = recipe['container_id']
         logger.info("received kill signal for container '%s'" % cid)
         logger.info("requesting local container ids")
         docker_client = self.get_docker_client()
@@ -61,6 +51,8 @@ class ExecutionCallback(Base):
         self.log_buffer = []
         self.last_sent_log_time = time.time()
         self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
+        self.sender = Sender('logs', config)
+        self.container_id = None
         if not self.root_dir:
             logger.info("Environment variable AMMONITE_BOXES_DIR not set")
 
@@ -113,9 +105,9 @@ class ExecutionCallback(Base):
         url = "%s/execution/%s/results/%s" % (service, execution_id, token)
         return requests.post(url, files=files, data=data)
 
-    def notify_error(self, recipe, log_url):
+    def notify_error(self, recipe):
         message = "An unexpected error occured. Please contact your admin"
-        self.send_logs(message, log_url, force=True)
+        self.send_logs(message, force=True)
         data = {"state": 'failed',
                 "response":-1,
                 "cpu": 0,
@@ -129,24 +121,22 @@ class ExecutionCallback(Base):
         logger.info('received %r', body)
         try:
             recipe = json.loads(body.decode('utf-8'))
-            service = self.config.get('QUEUES', 'KABUTO_SERVICE')
-            log_url = '%s/execution/%s/log/%s' % (service,
-                                                  recipe['execution'],
-                                                  recipe['result_token'])
-            self._call(ch, method, properties, recipe, log_url)
+            self.recipe = recipe
+            self._call(ch, method, properties, recipe)
         except Exception as e:
             print(e)
             # notify error to kabuto
             try:
-                self.notify_error(recipe, log_url)
-            except Exception:
+                self.notify_error(recipe)
+            except Exception as e:
+                print(e)
                 logger.info('Could not connect to the kabuto service')
             # skip job
             ch.basic_ack(delivery_tag=method.delivery_tag)
             if SENTRY_CLIENT:
                 SENTRY_CLIENT.captureException()
 
-    def _call(self, ch, method, properties, recipe, log_url):
+    def _call(self, ch, method, properties, recipe):
         logger.info('starting to work')
 
         inbox = self.create_inbox()
@@ -188,18 +178,18 @@ class ExecutionCallback(Base):
                                       stream=True,
                                       timestamps=True)
             for log in logs:
-                self.send_logs(log, log_url)
+                self.send_logs(log)
 
             response = docker_client.wait(container=container.get('Id'))
             logger.info('finished job with response: %s' % response)
         except docker.errors.APIError as e:
             state = 'failed'
             logger.critical("Docker API error: %s" % e)
-            self.send_logs(e, log_url)
+            self.send_logs(e)
         except Exception as e:
             state = "failed"
             logger.critical("Exception: %s" % e)
-            self.send_logs(e, log_url)
+            self.send_logs(e)
 
         logger.info('uploading results')
         data = {"state": state,
@@ -214,35 +204,37 @@ class ExecutionCallback(Base):
             data["state"] = 'failed'
             message = ("A character could not be decoded in an output "
                        "filename. Make sure your filenames are OS friendly")
-            self.send_logs(message, log_url)
+            self.send_logs(message)
             files = []
         except Exception as e:
             data["state"] = 'failed'
             message = ("Something unexpected happened: %s" % e)
-            self.send_logs(message, log_url)
+            self.send_logs(message)
             files = []
         self.upload_output(recipe['execution'],
                            recipe['result_token'],
                            data, files)
 
-        self.send_logs("", log_url, force=True)
+        self.send_logs("", force=True)
         logger.info('finished uploading results')
 
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def send_logs(self, log, url, force=False):
+    def send_logs(self, log, force=False):
+        if isinstance(log, bytes):
+            log = log.decode("utf-8")
         logger.info(log)
         # forcing if last sending was longer than a second
         send_log_time = time.time()
         if not force:
             force = (send_log_time - self.last_sent_log_time) > 1
-        # prevent from flooding the kabuto http server by
+        # prevent from flooding the kabuto by
         # sending sporadic updates instead of each line separate
-        self.log_buffer.append(str(log))
+        self.log_buffer.append(log)
         if len(self.log_buffer) >= 20 or force:
-            logs = json.dumps(self.log_buffer)
-            logger.info('Sending logs')
-            requests.post(url, data={"log_line": logs})
+            log_dict = {"job_id": self.recipe['execution'],
+                        "log_lines": self.log_buffer}
+            self.sender.send(log_dict)
             self.last_sent_log_time = send_log_time
             self.log_buffer = []
