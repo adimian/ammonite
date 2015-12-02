@@ -49,7 +49,6 @@ class Receiver(Base):
     def threaded_listen(self, handler, broadcast=False):
         thread = Thread(target=self.listen,
                         args=(handler, broadcast))
-        thread.daemon = True
         thread.start()
 
     def listen(self, handler, broadcast=False):
