@@ -1,6 +1,6 @@
 from ammonite.worker import main
 from ammonite.callback import ExecutionCallback, KillCallback
-from ammonite.utils import get_config
+from ammonite.utils import get_config, zipdir
 from unittest.mock import patch
 import pytest
 import os
@@ -8,10 +8,11 @@ import shutil
 import json
 import tempfile
 from testfixtures import LogCapture
-import docker
+import zipfile
 
 ROOT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
-CONF_PATH = os.path.join(ROOT_DIR, "data", "test_config.cfg")
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+CONF_PATH = os.path.join(DATA_DIR, "test_config.cfg")
 
 MOCK_GET_REQUEST = []
 MOCK_POST_REQUEST = []
@@ -371,12 +372,27 @@ def test_sender(a, b, c):
     sender.broadcast(['some message'])
 
 
+WRITE_FUNC = zipfile.ZipFile.write
 
 
+def unicode_error(*args, **kwargs):
+    for c in kwargs['arcname']:
+        if ord(c) > 128:
+            raise UnicodeEncodeError('hitchhiker', "", 42, 43,
+                                     'the universe and everything else')
+    zipf = args[0]
+    zipf.write = WRITE_FUNC
+    zipf.write(*args, **kwargs)
 
 
+@patch('zipfile.ZipFile.write', unicode_error)
+def test_zip_file():
+    dir_path = os.path.join(DATA_DIR, "non-ascii")
+    zip_file = "%s.zip" % os.path.join(tempfile.mkdtemp(), "test")
+    zipf = zipfile.ZipFile(zip_file, 'w')
+    zipdir(dir_path, zipf, root_folder=dir_path)
+    zipf.close()
 
-
-
-
-
+    expected = 'non-ascii-e769.txt'
+    with zipfile.ZipFile(zip_file) as zf:
+        assert expected in [i.filename for i in zf.infolist()]

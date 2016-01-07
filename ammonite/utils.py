@@ -50,22 +50,13 @@ def zipdir(path, zipf, root_folder):
         for fh in files:
             file_path = os.path.join(root, fh)
             arcname = os.path.relpath(file_path, root_folder)
-            zip_file(file_path, zipf, arcname)
+            zip_add_file(file_path, zipf, arcname)
 
 
-def zip_file(file_path, zipf, arcname):
-    encodings = ["utf8", "ascii", "latin1"]
+def zip_add_file(file_path, zipf, arcname):
     try:
         zipf.write(file_path, arcname=arcname)
     except UnicodeEncodeError:
-        narcname = os.fsencode(arcname)
-        while encodings:
-            try:
-                narcname = str(narcname, encodings.pop(0))
-                encodings = []
-            except Exception:
-                if not encodings:
-                    narcname = normalize('NFKD',
-                                         arcname).encode('ascii',
-                                                         'ignore')
-        zipf.write(file_path, arcname=narcname)
+        charlist = [i if ord(i) < 128 else '%s' % ord(i) for i in arcname]
+        arcname = ''.join(charlist)
+        zipf.write(file_path, arcname=arcname)
