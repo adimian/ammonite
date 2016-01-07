@@ -54,7 +54,7 @@ def zipdir(path, zipf, root_folder):
 
 
 def zip_file(file_path, zipf, arcname):
-    encodings = ["utf8", "unicode", "latin1"]
+    encodings = ["utf8", "ascii", "latin1"]
     try:
         zipf.write(file_path, arcname=arcname)
     except UnicodeEncodeError:
@@ -63,7 +63,7 @@ def zip_file(file_path, zipf, arcname):
             try:
                 narcname = str(narcname, encodings.pop(0))
                 encodings = []
-            except UnicodeDecodeError:
+            except Exception:
                 if not encodings:
                     narcname = normalize('NFKD',
                                          arcname).encode('ascii',
