@@ -133,6 +133,7 @@ class ExecutionCallback(Base):
                 logger.info('Could not connect to the kabuto service')
             # skip job
             ch.basic_ack(delivery_tag=method.delivery_tag)
+            logger.info('Skipped job due to error')
             if SENTRY_CLIENT:
                 SENTRY_CLIENT.captureException()
 

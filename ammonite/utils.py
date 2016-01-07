@@ -4,6 +4,7 @@ import sys
 import configparser
 import argparse
 import os
+from unicodedata import normalize
 
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -48,4 +49,23 @@ def zipdir(path, zipf, root_folder):
     for root, _, files in os.walk(path):
         for fh in files:
             file_path = os.path.join(root, fh)
-            zipf.write(file_path, os.path.relpath(file_path, root_folder))
+            arcname = os.path.relpath(file_path, root_folder)
+            zip_file(file_path, zipf, arcname)
+
+
+def zip_file(file_path, zipf, arcname):
+    encodings = ["utf8", "unicode", "latin1"]
+    try:
+        zipf.write(file_path, arcname=arcname)
+    except UnicodeEncodeError:
+        narcname = os.fsencode(arcname)
+        while encodings:
+            try:
+                narcname = str(narcname, encodings.pop(0))
+                encodings = []
+            except UnicodeDecodeError:
+                if not encodings:
+                    narcname = normalize('NFKD',
+                                         arcname).encode('ascii',
+                                                         'ignore')
+        zipf.write(file_path, arcname=narcname)
