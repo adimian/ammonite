@@ -288,29 +288,6 @@ def test_create_temp_dir(pc_mock, cp_mock, bc_mock):
 @patch('requests.get', mockGetRequest)
 @patch('requests.post', mockPostRequest)
 @patch('docker.Client', mockClient)
-def test_unicode_error(execution):
-    def prepare_output(*args, **kwargs):
-        raise UnicodeEncodeError('hitchhiker', "", 42, 43,
-                                 'the universe and everything else')
-    with patch("worker.ExecutionCallback.prepare_output", prepare_output):
-        body = {'execution': 1,
-                'image': "some_image",
-                'command': "some_command",
-                'attachment_token': "some_token",
-                'result_token': "some_result_token",
-                'image_tag': "some_tag"}
-        expected = ('ammonite.worker', 'INFO',
-                    ('A character could not be decoded in an output filename.'
-                     ' Make sure your filenames are OS friendly'))
-        with LogCapture() as l:
-            execution(mockChannel(), mockMethod(), None,
-                      json.dumps(body).encode(encoding='utf-8'))
-            assert expected in tuple(l.actual())
-
-
-@patch('requests.get', mockGetRequest)
-@patch('requests.post', mockPostRequest)
-@patch('docker.Client', mockClient)
 def test_kill_job(kill_execution):
     body = {'container_id': 1}
     with LogCapture() as l:

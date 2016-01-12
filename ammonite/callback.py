@@ -225,15 +225,14 @@ class ExecutionCallback(Base):
     def send_logs(self, log, force=False):
         if isinstance(log, bytes):
             log = log.decode("utf-8")
-        logger.info(log)
         # forcing if last sending was longer than a second
         send_log_time = time.time()
         if not force:
             force = (send_log_time - self.last_sent_log_time) > 1
-        # prevent from flooding the kabuto by
+        # prevent from flooding kabuto by
         # sending sporadic updates instead of each line separate
         self.log_buffer.append(log)
-        if len(self.log_buffer) >= 20 or force:
+        if len(self.log_buffer) >= 100 or force:
             log_dict = {"job_id": self.recipe['execution'],
                         "log_lines": self.log_buffer}
             self.sender.send(log_dict)
