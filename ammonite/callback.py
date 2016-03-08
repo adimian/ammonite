@@ -11,6 +11,7 @@ import docker
 import requests
 from ammonite.utils import SENTRY_CLIENT, zipdir
 from ammonite.connection import Sender, BaseHandler
+from threading import Thread
 
 logging.basicConfig(stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -51,7 +52,6 @@ class ExecutionCallback(Base):
         self.log_buffer = []
         self.last_sent_log_time = time.time()
         self.root_dir = os.environ.get('AMMONITE_BOXES_DIR', None)
-        self.sender = Sender('logs', config)
         self.container_id = None
         if not self.root_dir:
             logger.info("Environment variable AMMONITE_BOXES_DIR not set")
@@ -107,19 +107,19 @@ class ExecutionCallback(Base):
 
     def notify_error(self, recipe):
         message = "An unexpected error occured. Please contact your admin"
-        self.send_logs(message, force=True)
         data = {"state": 'failed',
                 "response":-1,
                 "cpu": 0,
                 "memory": 0,
-                "io": 0}
+                "io": 0,
+                "errors": [message]}
         self.upload_output(recipe['execution'],
                            recipe['result_token'],
                            data, [])
 
     def __call__(self, ch, method, properties, body):
-        logger.info('received %r', body)
         try:
+            logger.info('received %r', body)
             recipe = json.loads(body.decode('utf-8'))
             self.recipe = recipe
             self._call(ch, method, properties, recipe)
@@ -138,7 +138,8 @@ class ExecutionCallback(Base):
                 SENTRY_CLIENT.captureException()
 
     def _call(self, ch, method, properties, recipe):
-        logger.info('starting to work')
+        logger.info('starting to work for execution: %s' % recipe['execution'])
+        errors = []
 
         inbox = self.create_inbox()
         outbox = self.create_outbox()
@@ -149,7 +150,6 @@ class ExecutionCallback(Base):
         logger.info("creating container")
         # create_container fail if image is not pulled first:
         docker_client.pull(image_name, insecure_registry=True)
-        mem_limit = self.config.get('DOCKER', 'MEMORY_LIMIT')
 
         state = "done"
         response = -1
@@ -157,9 +157,9 @@ class ExecutionCallback(Base):
         try:
             container = docker_client.create_container(image=image_name,
                                                        command=recipe['command'],
-                                                       volumes=[inbox, outbox],
-                                                       mem_limit=mem_limit)
-            logger.info("finished creating container")
+                                                       volumes=[inbox, outbox])
+            cid = container.get('Id')
+            logger.info("finished creating container: %s" % cid)
 
             logger.info('downloading attachments')
             self.populate_inbox(inbox, recipe['execution'],
@@ -168,29 +168,31 @@ class ExecutionCallback(Base):
             logger.info('finished downloading attachments')
 
             logger.info('starting job')
-            docker_client.start(container=container.get('Id'),
+            docker_client.start(container=cid,
                                 binds={inbox: {'bind': '/inbox',
                                                'ro': True},
                                        outbox: {'bind': '/outbox',
                                                 'ro': False}})
-            logs = docker_client.logs(container.get('Id'),
-                                      stdout=True,
-                                      stderr=True,
-                                      stream=True,
-                                      timestamps=True)
-            for log in logs:
-                self.send_logs(log)
+
+            thread = Thread(target=stream_log, args=(cid,
+                                                     recipe['execution'],
+                                                     docker_client,
+                                                     self.config))
+            thread.daemon = True
+            thread.start()
 
             response = docker_client.wait(container=container.get('Id'))
             logger.info('finished job with response: %s' % response)
         except docker.errors.APIError as e:
             state = 'failed'
-            logger.critical("Docker API error: %s" % e)
-            self.send_logs(e)
+            run_message = "Docker API error: %s" % e
+            logger.critical(run_message)
+            errors.append(run_message)
         except Exception as e:
             state = "failed"
-            logger.critical("Exception: %s" % e)
-            self.send_logs(e)
+            run_message = "Exception: %s" % e
+            logger.critical(run_message)
+            errors.append(run_message)
 
         logger.info('uploading results')
         data = {"state": state,
@@ -201,40 +203,42 @@ class ExecutionCallback(Base):
 
         try:
             files = self.prepare_output(outbox, recipe['result_token'])
-        except UnicodeEncodeError:
+        except UnicodeEncodeError as e:
             data["state"] = 'failed'
             message = ("A character could not be decoded in an output "
                        "filename. Make sure your filenames are OS friendly")
-            self.send_logs(message)
+            errors.append(message)
             files = []
         except Exception as e:
             data["state"] = 'failed'
             message = ("Something unexpected happened: %s" % e)
-            self.send_logs(message)
+            errors.append(message)
             files = []
+
+        data['errors'] = errors
         self.upload_output(recipe['execution'],
                            recipe['result_token'],
                            data, files)
 
-        self.send_logs("", force=True)
         logger.info('finished uploading results')
-
         logger.info('done working')
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def send_logs(self, log, force=False):
-        if isinstance(log, bytes):
-            log = log.decode("utf-8")
-        # forcing if last sending was longer than a second
-        send_log_time = time.time()
-        if not force:
-            force = (send_log_time - self.last_sent_log_time) > 1
-        # prevent from flooding kabuto by
-        # sending sporadic updates instead of each line separate
-        self.log_buffer.append(log)
-        if len(self.log_buffer) >= 100 or force:
-            log_dict = {"job_id": self.recipe['execution'],
-                        "log_lines": self.log_buffer}
-            self.sender.send(log_dict)
-            self.last_sent_log_time = send_log_time
-            self.log_buffer = []
+
+def stream_log(cid, jid, docker_client, config):
+    container_path = config.get('DOCKER', 'CONTAINER_PATH')
+    sender = Sender(broadcast=False,
+                    queue_name='logs',
+                    config=config)
+    stream = True
+    path = "{0}/{1}/{1}-json.log".format(container_path, cid)
+    with open(path, "r+") as fh:
+        while stream:
+            state = docker_client.inspect_container(cid)['State']['Running']
+            logs = fh.read(1000000)
+            if logs:
+                sender.send({"job_id": jid,
+                             "log_lines": logs})
+            elif not state:
+                stream = False
+    logger.info('finished sending logs for container: %s' % cid)

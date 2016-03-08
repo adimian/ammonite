@@ -1,5 +1,5 @@
 from ammonite.worker import main
-from ammonite.callback import ExecutionCallback, KillCallback
+from ammonite.callback import ExecutionCallback, KillCallback, stream_log
 from ammonite.utils import get_config, zipdir
 from unittest.mock import patch
 import pytest
@@ -9,6 +9,8 @@ import json
 import tempfile
 from testfixtures import LogCapture
 import zipfile
+import time
+from threading import Thread
 
 ROOT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
@@ -18,6 +20,14 @@ MOCK_GET_REQUEST = []
 MOCK_POST_REQUEST = []
 
 MOCK_LOG_LINES = ["log line one", "log line two"]
+
+
+class MockConfig(object):
+    def __init__(self, config):
+        self.config = config
+
+    def get(self, key1, key2):
+        return self.config[key1][key2]
 
 
 class mockClient(object):
@@ -200,19 +210,6 @@ def test_upload_output(execution):
         shutil.rmtree(os.path.dirname(files['results'].name))
 
 
-@patch('requests.post', mockPostRequest)
-def test_send_logs(execution):
-    log_line = "a log line"
-    execution.send_logs(log_line, force=False)
-    execution.recipe = {"execution": 1}
-    assert execution.log_buffer == [log_line]
-    execution.send_logs(log_line, force=True)
-    assert execution.log_buffer == []
-
-    expected = [{'log_lines': ['a log line', 'a log line'], 'job_id': 1}]
-    assert expected == execution.sender.messages
-
-
 class mockChannel(object):
     def basic_ack(self, *args, **kwargs):
         pass
@@ -242,11 +239,8 @@ def test_call(execution):
     assert len(MOCK_GET_REQUEST) == 1
     assert len(MOCK_POST_REQUEST) == 1
 
-    expected_log = {'log_line': json.dumps(['log line one',
-                                            'log line two',
-                                            ''])}
     expected_data = {'io': 0, 'cpu': 0, 'state': 'done',
-                     'memory': 0, 'response': 0}
+                     'memory': 0, 'response': 0, 'errors': []}
 
     assert MOCK_POST_REQUEST[0].data == expected_data
 
@@ -256,7 +250,8 @@ def test_call(execution):
     execution(mockChannel(), mockMethod(), None,
               json.dumps(body).encode(encoding='utf-8'))
     expected_data = {'io': 0, 'cpu': 0, 'state': 'failed',
-                     'memory': 0, 'response':-1}
+                     'memory': 0, 'response':-1,
+                     'errors': ['Exception: run failed']}
     print(MOCK_POST_REQUEST[0].data)
     assert MOCK_POST_REQUEST[0].data == expected_data
 
@@ -328,25 +323,13 @@ def test_kill_job_general_error(kill_execution):
     def kill_container(*args, **kwargs):
         raise Exception("some error")
 
-    with patch("worker.KillCallback.call", kill_container):
+    with patch("ammonite.callback.KillCallback.call", kill_container):
         with LogCapture() as l:
             kill_execution(mockChannel(), mockMethod(), None,
                            json.dumps(body).encode(encoding='utf-8'))
-            expected = ("ammonite.connection", "CRITICAL",
+            expected = ("ammonite.worker", "CRITICAL",
                         'Exception: some error')
             l.check(expected)
-
-
-@patch('pika.PlainCredentials')
-@patch('pika.ConnectionParameters')
-@patch('pika.BlockingConnection')
-def test_sender(a, b, c):
-    from ammonite.connection import Sender
-    sender = Sender("some_queue", {"AMQP_HOSTNAME": "",
-                                   "AMQP_USER": "",
-                                   "AMQP_PASSWORD": ""})
-    sender.send(['some message'])
-    sender.broadcast(['some message'])
 
 
 WRITE_FUNC = zipfile.ZipFile.write
@@ -372,3 +355,66 @@ def test_zip_file():
 
     with zipfile.ZipFile(zip_file) as zf:
         assert [i.filename for i in zf.infolist()]
+
+
+@patch('pika.PlainCredentials')
+@patch('pika.ConnectionParameters')
+@patch('pika.BlockingConnection')
+def test_sender(a, b, c):
+    from ammonite.connection import Sender
+    sender = Sender(False,
+                    "some_queue",
+                    {"AMQP_HOSTNAME": "",
+                     "AMQP_USER": "",
+                     "AMQP_PASSWORD": ""})
+    sender.send(['some message'])
+
+
+class MockSender(object):
+    def __init__(self, *args, **kwargs):
+        self.idx = 0
+
+    def send(self, message):
+        msg = "this is message %s" % self.idx
+        expected = {'log_lines': msg,
+                    'job_id': "2"}
+        assert message == expected
+        self.idx += 1
+
+
+class MockDockerContainer(object):
+    running = True
+
+    def inspect_container(self, cid):
+        return {"State": {"Running": self.running}}
+
+
+@patch('pika.PlainCredentials')
+@patch('pika.ConnectionParameters')
+@patch('pika.BlockingConnection')
+@patch('ammonite.callback.Sender', MockSender)
+def test_stream_logs(a, b, c):
+    print("starting stream log")
+    container_name = "container"
+    container_path = os.path.join(ROOT_DIR, "data")
+    filename = os.path.join(container_path,
+                            container_name,
+                            "%s-json.log" % container_name)
+    container = MockDockerContainer()
+    config = MockConfig({'DOCKER': {'CONTAINER_PATH': container_path}})
+    with LogCapture() as l:
+        with open(filename, 'w') as fh:
+            thread = Thread(target=stream_log,
+                            args=(container_name, "2", container, config))
+            thread.daemon = True
+            thread.start()
+            for idx in range(5):
+                time.sleep(0.5)
+                fh.write("this is message %s" % idx)
+                fh.flush()
+        container.running = False
+        time.sleep(0.5)
+
+        expected = ('ammonite.worker', 'INFO',
+                    'finished sending logs for container: container')
+        l.check(expected)
