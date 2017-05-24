@@ -46,6 +46,18 @@ class KillCallback(Base):
             logger.info("container not on this machine")
 
 
+def handle_job(ch, method, properties, body):
+    def execution_callback(ch, method, properties, body):
+        ExecutionCallback(ch.receiver.config)(ch, method, properties, body)
+    logger.info("Starting job thread")
+    thread = Thread(
+        target=execution_callback,
+        args=(ch, method, properties, body)
+    )
+    thread.start()
+    logger.info("thread started")
+
+
 class ExecutionCallback(Base):
     def __init__(self, config):
         self.config = config
@@ -81,7 +93,6 @@ class ExecutionCallback(Base):
             raise Exception("Could not retrieve attachment")
         zip_dir = os.path.join(inbox, 'attachment.zip')
         with open(zip_dir, 'wb+') as fh:
-
             for block in r.iter_content(1024):
                 if not block:
                     break
@@ -122,7 +133,7 @@ class ExecutionCallback(Base):
             logger.info('received %r', body)
             recipe = json.loads(body.decode('utf-8'))
             self.recipe = recipe
-            self._call(ch, method, properties, recipe)
+            self._call(method, properties, recipe)
         except Exception as e:
             print(e)
             # notify error to kabuto
@@ -132,12 +143,13 @@ class ExecutionCallback(Base):
                 print(e)
                 logger.info('Could not connect to the kabuto service')
             # skip job
-            ch.basic_ack(delivery_tag=method.delivery_tag)
             logger.info('Skipped job due to error')
             if SENTRY_CLIENT:
                 SENTRY_CLIENT.captureException()
+        logger.info("sending ack")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def _call(self, ch, method, properties, recipe):
+    def _call(self, method, properties, recipe):
         logger.info('starting to work for execution: %s' % recipe['execution'])
         errors = []
 
@@ -222,10 +234,10 @@ class ExecutionCallback(Base):
 
         logger.info('finished uploading results')
         logger.info('done working')
-        ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def stream_log(cid, jid, docker_client, config):
+    logger.info('started sending logs for container: %s' % cid)
     container_path = config.get('DOCKER', 'CONTAINER_PATH')
     sender = Sender(broadcast=False,
                     queue_name='logs',

@@ -415,6 +415,8 @@ def test_stream_logs(a, b, c):
         container.running = False
         time.sleep(0.5)
 
-        expected = ('ammonite.worker', 'INFO',
-                    'finished sending logs for container: container')
-        l.check(expected)
+        expected = (('ammonite.worker', 'INFO',
+                     'started sending logs for container: container'),
+                    ('ammonite.worker', 'INFO',
+                    'finished sending logs for container: container'))
+        l.check(*expected)

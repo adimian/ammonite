@@ -1,4 +1,4 @@
-from ammonite.callback import ExecutionCallback, KillCallback
+from ammonite.callback import handle_job, KillCallback
 from ammonite.utils import setup_sentry, get_config, logger
 from ammonite.connection import Receiver
 from threading import Thread
@@ -16,7 +16,7 @@ def main():
 
     job_listener = Receiver(config.get('QUEUES', 'JOBS'), config)
     kill_listener = Receiver(config.get('QUEUES', 'KILL'), config)
-    job_listener.threaded_listen(ExecutionCallback(config))
+    job_listener.threaded_listen(handle_job)
     kill_listener.threaded_listen(KillCallback(config), True)
 
 

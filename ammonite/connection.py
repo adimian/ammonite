@@ -16,6 +16,7 @@ class Base(object):
     def __init__(self, queue_name, config):
         self.slots = 1
         self.queue_name = queue_name
+        self.config = config
         self.username = config.get('AMQP', 'USER')
         self.password = config.get('AMQP', 'PASSWORD')
         self.hostname = config.get('AMQP', 'HOSTNAME')
@@ -53,7 +54,16 @@ class Receiver(Base):
         thread = Thread(target=self.listen, args=(handler, broadcast))
         thread.start()
 
-    def listen(self, handler, broadcast=False):
+    def listen(self, *args, **kwargs):
+        try:
+            self._listen(*args, **kwargs)
+        except pika.exceptions.ConnectionClosed:
+            logger.warning("Resetting connection")
+            self.connection = self.get_connection()
+            self.listen(*args, **kwargs)
+
+    def _listen(self, handler, broadcast=False):
+        logger.info("Setting up connection")
         queue_name = self.queue_name
         channel = self.connection.channel()
         if broadcast:
@@ -69,6 +79,7 @@ class Receiver(Base):
             channel.queue_declare(queue=queue_name, durable=True)
             channel.basic_qos(prefetch_count=int(self.slots))
 
+        channel.receiver = self
         channel.basic_consume(handler, queue=queue_name)
         channel.start_consuming()
 
