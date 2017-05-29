@@ -417,6 +417,7 @@ def test_stream_logs(a, b, c):
 
         expected = (('ammonite.worker', 'INFO',
                      'started sending logs for container: container'),
+                    ('ammonite.worker', 'INFO', 'Starting the streaming'),
                     ('ammonite.worker', 'INFO',
                     'finished sending logs for container: container'))
         l.check(*expected)

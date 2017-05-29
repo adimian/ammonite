@@ -194,6 +194,7 @@ class ExecutionCallback(Base):
             thread.start()
 
             response = docker_client.wait(container=container.get('Id'))
+            thread.join()
             logger.info('finished job with response: %s' % response)
         except docker.errors.APIError as e:
             state = 'failed'
@@ -244,6 +245,9 @@ def stream_log(cid, jid, docker_client, config):
                     config=config)
     stream = True
     path = "{0}/{1}/{1}-json.log".format(container_path, cid)
+    logger.info('Starting the streaming')
+    if not os.path.exists(path):
+        logger.info("can't stream logs, %s does not exist" % path)
     with open(path, "r+") as fh:
         while stream:
             state = docker_client.inspect_container(cid)['State']['Running']
