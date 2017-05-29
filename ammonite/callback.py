@@ -246,7 +246,16 @@ def stream_log(cid, jid, docker_client, config):
     stream = True
     path = "{0}/{1}/{1}-json.log".format(container_path, cid)
     logger.info('Starting the streaming')
-    if not os.path.exists(path):
+    retries = 5
+    exists = False
+    for retry in range(retries):
+        if retry > 0:
+            logger.info('Retrying to stream logs, attempt: %s' % retry)
+        if os.path.exists(path):
+            exists = True
+            break
+        time.sleep(2)
+    if not exists:
         logger.info("can't stream logs, %s does not exist" % path)
     with open(path, "r+") as fh:
         while stream:
