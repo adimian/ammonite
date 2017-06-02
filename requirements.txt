@@ -1,4 +1,4 @@
-docker-py==1.6.0
+docker-py==1.10.6
 py==1.4.27
 pytest==2.7.0
 pytest-cov==1.8.1

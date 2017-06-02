@@ -22,7 +22,8 @@ logger.level = logging.DEBUG
 
 class Base(BaseHandler):
     def get_docker_client(self):
-        client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'))
+        client = docker.Client(base_url=self.config.get('DOCKER', 'ENDPOINT'),
+                               version=self.config.get('DOCKER', 'API_VERSION'))
         if self.config.get('DOCKER', 'LOGIN'):
             client.login(self.config.get('DOCKER', 'LOGIN'),
                          self.config.get('DOCKER', 'PASSWORD'),
