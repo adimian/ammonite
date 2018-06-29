@@ -99,7 +99,13 @@ class Sender(Base):
         params = {'exchange': '',
                   'routing_key': ''}
 
-        channel = self.connection.channel()
+        try:
+            channel = self.connection.channel()
+        except Exception:
+            logger.info('Reconnecting')
+            self.connection = self.get_connection()
+            channel = self.connection.channel()
+
         if self.broadcast:
             channel.exchange_declare(exchange=self.queue_name,
                                      type='fanout')
